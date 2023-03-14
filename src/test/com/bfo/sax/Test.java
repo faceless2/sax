@@ -129,17 +129,22 @@ public class Test {
                 }
             }
             String msg = null;
+            boolean newFail = newlist.get(newlist.size() - 1).startsWith("fatalError");
+            boolean oldFail = oldlist.get(oldlist.size() - 1).startsWith("fatalError");
+            boolean diff = true;
             if (oldlist.equals(newlist)) {
                 if (valid == null) {
                     msg = "GOOD";
-                } else if (newlist.get(newlist.size() - 1).startsWith("fatalError") && !valid.booleanValue()) {
+                } else if (!valid.booleanValue() && newFail) {
                     msg = "GOOD (failed)";
-                } else if (newlist.get(newlist.size() - 1).startsWith("fatalError") && valid.booleanValue()) {
+                } else if (!valid.booleanValue() && !newFail) {
+                    msg = "SO-SO (suceeded identically, expected failure)";
+                } else if (valid.booleanValue() && newFail) {
                     msg = "SO-SO (failed identically, expected success)";
+                } else if (valid.booleanValue() && !newFail) {
+                    msg = "GOOD";
                 }
             } else {
-                boolean newFail = newlist.get(newlist.size() - 1).startsWith("fatalError");
-                boolean oldFail = oldlist.get(oldlist.size() - 1).startsWith("fatalError");
                 if (valid == null) {
                     if (newFail && oldFail) {
                         msg = "BAD (both failed differently)";
@@ -157,6 +162,7 @@ public class Test {
                         msg = "BAD (BFO failed, system succeded, success expected)";
                     } else if (oldFail) {
                         msg = "GOOD (BFO succeeded, system failed, success expected)";
+                        diff = false;
                     } else {
                         msg = "BAD (expected success, with differences)";
                     }
@@ -165,6 +171,7 @@ public class Test {
                         msg = "BAD (both failed differently, failure expected)";
                     } else if (newFail) {
                         msg = "GOOD (BFO failed, system succeded, failure expected)";
+                        diff = false;
                     } else if (oldFail) {
                         msg = "BAD (BFO succeeded, system failed, failure expected)";
                     } else {
@@ -173,7 +180,7 @@ public class Test {
                 }
             }
             System.out.println("### " + file + ":   " + msg);
-            if (!quiet) {
+            if (!quiet && diff) {
                 Patch patch = DiffUtils.diff(oldlist, newlist);
                 List<String> out = UnifiedDiffUtils.generateUnifiedDiff("xerces/" + file, "bfo/" + file, oldlist, patch, 2);
                 for (String s : out) {
@@ -293,28 +300,28 @@ public class Test {
             msg("endEntity(" + fmt(name) + ")");
         }
         public void externalEntityDecl(String name, String publicId, String systemId) throws SAXException {
-            msg("externalEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(systemId)+")");
+            msg("externalEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public InputSource getExternalSubset(String name, String baseURI) throws SAXException {
-            msg("getExternalSubset(" + fmt(name)+", "+fmt(baseURI)+")");
+            msg("getExternalSubset(" + fmt(name)+", "+fmt(fixPath(baseURI))+")");
             return null;
         }
         public void internalEntityDecl(String name, String value) throws SAXException {
             msg("internalEntityDecl(" + fmt(name)+", "+fmt(value)+")");
         }
         public InputSource resolveEntity(String publicId, String systemId) throws SAXException {
-            msg("resolveEntity(" + fmt(publicId)+", "+fmt(systemId)+")");
+            msg("resolveEntity(" + fmt(publicId)+", "+fmt(fixPath(systemId))+")");
             return null;
         }
         public InputSource resolveEntity(String name, String publicId, String baseURI, String systemId) throws SAXException {
-            msg("resolveEntity(" + fmt(name)+", "+fmt(publicId)+", "+fmt(baseURI)+", "+fmt(systemId)+")");
+            msg("resolveEntity(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(baseURI))+", "+fmt(fixPath(systemId))+")");
             return null;
         }
         public void startCDATA() throws SAXException {
             msg("startCDATA");
         }
         public void startDTD(String name, String publicId, String systemId) throws SAXException {
-            msg("startDTD(" + fmt(name)+", "+fmt(publicId)+", "+fmt(systemId)+")");
+            msg("startDTD(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public void startEntity(String name) throws SAXException {
             msg("startEntity(" + fmt(name)+")");
@@ -347,7 +354,7 @@ public class Test {
             ignorable.append(ch, start, length);
         }
         public void notationDecl(String name, String publicId, String systemId) throws SAXException {
-            msg("notationDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(systemId)+")");
+            msg("notationDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public void processingInstruction(String target, String data) throws SAXException {
             msg("processingInstruction(" + fmt(target)+", "+fmt(data)+")");
@@ -372,7 +379,7 @@ public class Test {
             msg("startPrefixMapping(" + fmt(prefix)+", "+fmt(uri) + ")");
         }
         public void unparsedEntityDecl(String name, String publicId, String systemId, String notationName) throws SAXException {
-            msg("unparsedEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(systemId)+", "+fmt(notationName)+")");
+            msg("unparsedEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+", "+fmt(notationName)+")");
         }
         public void warning(SAXParseException e) throws SAXException {
             msg("warning: " + e);
@@ -395,6 +402,13 @@ public class Test {
         }
         sb.append(']');
         return sb.toString();
+    }
+
+    private static String fixPath(String s) {
+        if (s != null && s.startsWith("file:///")) {
+            s = "file:/" + s.substring(8);
+        }
+        return s;
     }
 
     private static String fmt(Attributes a) {
@@ -435,7 +449,7 @@ public class Test {
             if (sb.length() > 1) {
                 sb.append(",");
             }
-            sb.append("system=" + fmt(locator.getSystemId()));
+            sb.append("system=" + fmt(fixPath(locator.getSystemId())));
         }
         if (locator.getLineNumber() > 0) {
             if (sb.length() > 1) {
@@ -512,7 +526,20 @@ public class Test {
                 }
             });
             List<String> l = new ArrayList<String>();
+            String validity = "--novalidity";
             for (Map<String,String> test : tests) {
+                String v = test.get("type");
+                if (v == null) {
+                    v = "--novalidity";
+                } else if ("valid".equals(v)) {
+                    v = "--valid";
+                } else {
+                    v = "--invalid";
+                }
+                if (!v.equals(validity)) {
+                    l.add(v);
+                    validity = v;
+                }
                 String uri = "samples/xmlconf/" + test.get("uri");
                 l.add(uri.replaceAll("//*", "/"));
             }
@@ -547,6 +574,8 @@ public class Test {
                 valid = true;
             } else if (arg.equals("--invalid")) {
                 valid = false;
+            } else if (arg.equals("--novalidity")) {
+                valid = null;
             } else if (arg.equals("--quiet")) {
                 quiet = true;
             } else {
