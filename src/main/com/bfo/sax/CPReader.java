@@ -90,39 +90,45 @@ abstract class CPReader {
                 } else {
                     v = reader.read();
                 }
+                int out;
                 if (v < 0x20) {
                     if (v == '\r') {
                         v = reader.read();
                         if (v == '\n' || (xml11 && v == 0x85)) {
                             line++;
                             column = 1;
-                            return '\n';
+                            out = '\n';
                         } else {
                             hold = v;
                             line++;
                             column = 1;
-                            return '\n';
+                            out = '\n';
                         }
                     } else if (v == '\n') {
                         line++;
                         column = 1;
-                        return v;
+                        out = v;
                     } else if (v == '\t') {
                         column++;
-                        return v;
+                        out = v;
                     } else if (v < 0) {
-                        return v;
+                        out = v;
                     } else {
                         throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                     }
                 } else if (xml11 && (v == 0x85 || v == 0x2028)) {
                     line++;
                     column = 1;
-                    return '\n';
+                    out = '\n';
                 } else {
                     column++;
-                    return v;
+                    out = v;
                 }
+                return out;
+            }
+
+            @Override public String toString() {
+                return "{normalize" + reader + "}";
             }
 
             @Override public void close() throws IOException {
@@ -179,6 +185,9 @@ abstract class CPReader {
             @Override public boolean isXML11() {
                 return a.isXML11() || b.isXML11();
             }
+            @Override public String toString() {
+                return "{" + a + " + " + b + "}";
+            }
         };
     }
 
@@ -221,6 +230,9 @@ abstract class CPReader {
             }
             @Override public boolean isXML11() {
                 return xml11;
+            }
+            @Override public String toString() {
+                return "{string src="+systemId+"}";
             }
         };
     }
@@ -268,6 +280,13 @@ abstract class CPReader {
             @Override public String getSystemId() {
                 return systemId;
             }
+            @Override public String toString() {
+                if (in instanceof InputStreamReader) {
+                    return "{reader+"+((InputStreamReader)in).getEncoding()+" src=" + systemId+"}";
+                } else {
+                    return "{reader src=" + systemId+"}";
+                }
+            }
         };
     }
 
@@ -285,26 +304,26 @@ abstract class CPReader {
                 break;
             }
         }
-        String enc = null; // "utf-8";
+        String bomenc = null, xmlenc = null;
         int skip = 0;
         if (b[0] == (byte)0xfe && b[1] == (byte)0xff) {
-            enc = "utf-16be";
+            bomenc = "utf-16be";
             skip = 2;
         } else if (b[0] == (byte)0xff && b[1] == (byte)0xfe) {
-            enc = "utf-16le";
+            bomenc = "utf-16le";
             skip = 2;
         } else if (b[0] == (byte)0xef && b[1] == (byte)0xbb && b[2] == (byte)0xbf) {
-            enc = "utf-8";
+            bomenc = "utf-8";
             skip = 3;
         } else if (xml && b[0] == 0 && b[1] == (byte)0x3c && b[2] == 0 && b[3] == (byte)0x3f) {
-            enc = "utf-16be";
+            bomenc = "utf-16be";
         } else if (xml && b[0] == (byte)0x3c && b[1] == 0 && b[2] == (byte)0x3f && b[3] == (byte)0) {
-            enc = "utf-16le";
+            bomenc = "utf-16le";
         }
-        if (enc != null && enc.startsWith("utf-16") && (len&1) == 1) {
+        if (bomenc != null && bomenc.startsWith("utf-16") && (len&1) == 1) {
             b[len++] = (byte)in.read();
         }
-        final String prolog = new String(b, skip, len - skip, enc == null ? "iso-8859-1" : enc);
+        String prolog = new String(b, skip, len - skip, bomenc != null ? bomenc : "iso-8859-1");
         if (xml) {
             String s = prolog.replaceAll("\t\n\r", " ");
             if (s.length() > 0 && s.charAt(s.length() - 1) == '>' && s.charAt(s.length() - 2) == '?' && s.charAt(0) == '<' && s.charAt(1) == '?' && Character.toLowerCase(s.charAt(2)) == 'x' && Character.toLowerCase(s.charAt(3)) == 'm' && Character.toLowerCase(s.charAt(4)) == 'l') {
@@ -317,15 +336,17 @@ abstract class CPReader {
                     c = s.charAt(0);
                     int i;
                     if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
-                        if (enc == null) {
-                            enc = s.substring(1, i).toLowerCase();
-                        }
+                        xmlenc = s.substring(1, i).toLowerCase();
                     }
                 }
             }
         }
-        if (enc == null) {
-            enc = "utf-8";
+        String enc;
+        if (bomenc != null) {
+            enc = bomenc;
+        } else {
+            enc = xmlenc != null ? xmlenc : "utf-8";
+            prolog = new String(prolog.getBytes("iso-8859-1"), enc);
         }
         CPReader r;
         if (enc.equals("utf-8") || enc.equals("utf8")) {
@@ -378,6 +399,9 @@ abstract class CPReader {
                 @Override public String getSystemId() {
                     return systemId;
                 }
+                @Override public String toString() {
+                    return "{inputstream+utf8 src="+systemId+"}";
+                }
             };
         } else if (enc.equals("iso-8859-1") || enc.equals("iso8859-1")) {
             r = new CPReader() {
@@ -392,6 +416,9 @@ abstract class CPReader {
                 }
                 @Override public String getSystemId() {
                     return systemId;
+                }
+                @Override public String toString() {
+                    return "{inputstream+8859 src="+systemId+"}";
                 }
             };
         } else {
