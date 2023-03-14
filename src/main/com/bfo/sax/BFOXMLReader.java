@@ -391,6 +391,12 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
+    /**
+     * children    ::=    (choice | seq) ('?' | '*' | '+')?
+     * cp          ::=    (Name | choice | seq) ('?' | '*' | '+')?
+     * choice      ::=    '(' S? cp ( S? '|' S? cp )+ S? ')'
+     * seq         ::=    '(' S? cp ( S? ',' S? cp )* S? ')'
+     */
     private void readElementContent(final CPReader reader, StringBuilder sb, boolean first) throws SAXException, IOException {
         if (c == '(' || first) {
             sb.append('(');
@@ -423,8 +429,22 @@ public class BFOXMLReader implements XMLReader, Locator {
             sb.append(')');
             c = reader.read();
         } else if (!first) {
-            String s = readName(reader);
-            sb.append(s);
+            if (c == '%') {
+                Entity entity = readPEReference(reader);
+                c = reader.read();
+                if (entityStack.contains(entity)) {
+                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                } else {
+                    entityStack.add(entity);
+                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    sb.append(entityReader.asString());
+                    entityReader.close();
+                    entityStack.remove(entityStack.size() - 1);
+                }
+            } else {
+                String s = readName(reader);
+                sb.append(s);
+            }
         }
         if (c == '?' || c == '+' || c == '*') {
             sb.append((char)c);
@@ -432,6 +452,10 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
+    /**
+     * contentspec ::= 'EMPTY' | 'ANY' | Mixed | children
+     * Mixed       ::= '(' S? '#PCDATA' (S? '|' S? Name)* S? ')*' | '(' S? '#PCDATA' S? ')'
+     */
     private String readContentSpec(final CPReader reader) throws SAXException, IOException {
         if (c == '(') {
             StringBuilder sb = new StringBuilder();
@@ -455,9 +479,23 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (isS(c)) {
                             readS(reader);
                         }
-                        s = readName(reader);
                         sb.append('|');
-                        sb.append(s);
+                        if (c == '%') {
+                            Entity entity = readPEReference(reader);
+                            c = reader.read();
+                            if (entityStack.contains(entity)) {
+                                fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                            } else {
+                                entityStack.add(entity);
+                                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                                sb.append(entityReader.asString());
+                                entityReader.close();
+                                entityStack.remove(entityStack.size() - 1);
+                            }
+                        } else {
+                            s = readName(reader);
+                            sb.append(s);
+                        }
                         if (isS(c)) {
                             readS(reader);
                         }
@@ -487,6 +525,19 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readElementContent(reader, sb, true);
             }
             return sb.toString();
+        } else if (c == '%') {
+            Entity entity = readPEReference(reader);
+            c = reader.read();
+            if (entityStack.contains(entity)) {
+                return fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+            } else {
+                entityStack.add(entity);
+                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                String s = entityReader.asString();
+                entityReader.close();
+                entityStack.remove(entityStack.size() - 1);
+                return s;
+            }
         } else {
             String s = readName(reader);
             if (s.equals("EMPTY") || s.equals("ANY")) {
@@ -918,11 +969,21 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (c != '[') {
             fatalError(reader, "Bad token <![IGNORE " + hex(c));
         }
+        int depth = 1;
         while ((c=reader.read()) >= 0) {
-            if (c == ']') {
+            if (c == '<') {
+                if ((c=reader.read()) == '!') {
+                    if ((c=reader.read()) == '[') {
+                        depth++;
+                    }
+                }
+            } else if (c == ']') {
                 if ((c=reader.read()) == ']') {
                     if ((c=reader.read()) == '>') {
-                        return;
+                        depth--;
+                        if (depth == 0) {
+                            return;
+                        }
                     }
                 }
             }
@@ -994,7 +1055,11 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         dtd = new DTD(factory, pubid, reader.getSystemId(), sysid);
         Entity dtdentity = new Entity(factory, null, name, null, pubid, sysid, -1, -1);
-        CPReader dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+        CPReader dtdreader = null;
+        if (pubid == null && sysid == null) {
+            // First, to match Xerces
+            dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+        }
         if (lexicalHandler != null) {
             lexicalHandler.startDTD(name, pubid, sysid);
         }
@@ -1004,6 +1069,9 @@ public class BFOXMLReader implements XMLReader, Locator {
             readInternalSubset(internalSubset);
             curreader = tmp;
             internalSubset.close();
+        }
+        if (pubid != null || sysid != null) {
+            dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
         }
         if (dtdreader != null) {
             if (lexicalHandler != null) {
@@ -1099,6 +1167,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                         readComment(reader);
                     } else if (c == '[') {
                         c = reader.read();
+                        if (isS(c)) {
+                            readS(reader);
+                        }
                         String s = readName(reader);
                         if ("INCLUDE".equals(s)) {
                             CPReader includeReader = readINCLUDE(reader);
@@ -1229,7 +1300,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             }
             if (ndata != null) {
                 if (dtdHandler != null) {
-                    dtdHandler.unparsedEntityDecl(name, pubid, sysid, ndata);
+                    dtdHandler.unparsedEntityDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid), ndata);
                 }
             } else {
                 String r = factory.resolve(reader.getSystemId(), sysid);
@@ -1242,14 +1313,20 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
+    /**
+     *  AttlistDecl ::= '<!ATTLIST' S Name AttDef* S? '>'
+     *  AttDef      ::= S Name S AttType S DefaultDecl
+     *  DefaultDecl ::= '#REQUIRED' | '#IMPLIED' | (('#FIXED' S)? AttValue)
+     *
+     * We've just read "ATTLIST"
+     */
     private void readATTLIST(final CPReader reader) throws SAXException, IOException {
         readS(reader);
         String name = readName(reader);
-        c = reader.read();
+        if (isS(c)) {
+            readS(reader);
+        }
         while (c != '>') {
-            if (isS(c)) {
-                readS(reader);
-            }
             String attName = readName(reader);
             readS(reader);
             String attType = readAttType(reader);
@@ -1261,6 +1338,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (attMode.equals("#FIXED")) {
                     readS(reader);
                     defaultValue = readAttValue(reader, c);
+                    c = reader.read();
                 } else if (attMode.equals("#IMPLIED") || attMode.equals("#REQUIRED")) {
                     defaultValue = null;
                 } else {
@@ -1271,6 +1349,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                 defaultValue = readAttValue(reader, c);
                 c = reader.read();
             }
+            if (isS(c)) {
+                readS(reader);
+            }
+//            System.out.println("name="+attName+" type="+attType+" mode="+attMode+" v="+fmt(defaultValue)+" c="+hex(c));
             try {
                 if (defaultValue != null) {
                     if ("ID".equals(attType) || "IDREF".equals(attType) || "ENTITY".equals(attType)) {
@@ -1301,9 +1383,6 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (declHandler != null) {
                 declHandler.attributeDecl(name, attName, attType, attMode, defaultValue);
             }
-            if (isS(c)) {
-                readS(reader);
-            }
         }
     }
 
@@ -1333,7 +1412,35 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
 
     private void readNOTATION(final CPReader reader) throws SAXException, IOException {
-        fatalError(reader, "NOTATATION not implemented");
+        readS(reader);
+        String name = readName(reader);
+        readS(reader);
+        String pubid = null, sysid = null;
+        String s = readName(reader);
+        if (s.equals("SYSTEM")) {
+            readS(reader);
+            sysid = readSystemLiteral(reader, c);
+        } else if (s.equals("PUBLIC")) {
+            readS(reader);
+            pubid = readPubidLiteral(reader, c);
+            if (isS(c)) {
+                readS(reader);
+                if (c != '>') {
+                    sysid = readSystemLiteral(reader, c);
+                }
+            }
+            if (isS(c)) {
+                readS(reader);
+            }
+        } else {
+            fatalError(reader, "Bad NotationDecl \"" + s + "\"");
+        }
+        if (c != '>') {
+            fatalError(reader, "Bad NotationDecl " + hex(c));
+        }
+        if (dtdHandler != null) {
+            dtdHandler.notationDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid));
+        }
     }
 
     /**
