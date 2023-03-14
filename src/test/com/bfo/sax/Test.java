@@ -10,17 +10,17 @@ import javax.xml.parsers.*;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 import org.xml.sax.helpers.*;
+import com.github.difflib.*;
+import com.github.difflib.patch.*;
 
 public class Test {
 
     private static SAXParserFactory newfactory, oldfactory;
 
     private boolean newparser, oldparser, decl, lexical, speed, quiet, large, number;
+    private Boolean valid;              // expectation or null for none
 
     private void run(String file) {
-        if (!quiet) {
-            System.out.println(file);
-        }
         // newparser!=null && oldparser!=null && large
         //   set digest, run in two threads, compare results at end
         // newparser!=null && oldparser!=null
@@ -30,22 +30,24 @@ public class Test {
         // normal
         //   set nether, run
         if (newparser && oldparser) {
-            MessageDigest digestold = null;
-            MessageDigest digestnew = null;
             MyHandler handlerold, handlernew;
             Callback callback;
+            List<String> oldlist = new ArrayList<String>();
+            List<String> newlist = new ArrayList<String>();
             if (large) {
-                try {
-                    digestold = MessageDigest.getInstance("SHA-256");
-                    digestnew = MessageDigest.getInstance("SHA-256");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                final MessageDigest fdigestold = digestold, fdigestnew = digestnew;
                 callback = new Callback() {
+                    MessageDigest digestold, digestnew;
                     public void msg(String msg, MyHandler handler) {
+                        try {
+                            if (digestold == null) {
+                                digestold = MessageDigest.getInstance("SHA-256");
+                                digestnew = MessageDigest.getInstance("SHA-256");
+                            }
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
                         boolean old = handler.toString().equals("old");
-                        MessageDigest digest = old ? fdigestold : fdigestnew;
+                        MessageDigest digest = old ? digestold : digestnew;
                         try {
                             if (msg.startsWith("fatalError: org.xml.sax.SAXParseException;")) {
                                 msg = "fatalError: org.xml.sax.SAXParseException;";
@@ -56,41 +58,28 @@ public class Test {
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
+                        if (msg.equals("endDocument")) {
+                            if (old) {
+                                oldlist.add(fmt(digestold.digest()));
+                            } else {
+                                newlist.add(fmt(digestnew.digest()));
+                            }
+                        }
                     }
                 };
             } else {
                 callback = new Callback() {
                     SAXException e = null;
-                    Deque<String> oldlist = new ArrayDeque<String>();
-                    Deque<String> newlist = new ArrayDeque<String>();
                     int removed = 0;
                     public synchronized void msg(String msg, MyHandler handler) throws SAXException {
                         boolean old = handler.toString().equals("old");
-                        if (e != null) {
-                            throw e;
-                        }
                         if (msg.startsWith("fatalError: org.xml.sax.SAXParseException;")) {
                             msg = "fatalError: org.xml.sax.SAXParseException;";
                         }
                         if (old) {
-                            oldlist.addLast(msg);
+                            oldlist.add(msg);
                         } else {
-                            newlist.addLast(msg);
-                        }
-                        while (oldlist.size() > 0 && newlist.size() > 0) {
-                            String oldmsg = oldlist.removeFirst();
-                            String newmsg = newlist.removeFirst();
-                            if (oldmsg.equals(newmsg)) {
-                                removed++;
-                            } else {
-                                synchronized(this) {
-                                    System.out.println("old=" + oldmsg);
-                                    System.out.println("new=" + newmsg);
-                                    e = new SAXException("MISMATCH at line " + removed);
-    //                                e.printStackTrace(System.out);
-                                }
-                                throw e;
-                            }
+                            newlist.add(msg);
                         }
                     }
                 };
@@ -117,8 +106,13 @@ public class Test {
                         } catch (SAXException e) {
                             // This will have been logged!
                         } catch (Exception e) {
-                            synchronized(this) {
-                                e.printStackTrace(System.out);
+                            StringWriter w = new StringWriter();
+                            e.printStackTrace(new PrintWriter(w));
+                            List<String> l = Arrays.asList(w.toString().split("\n"));
+                            if (old) {
+                                oldlist.addAll(l);
+                            } else {
+                                newlist.addAll(l);
                             }
                         } finally {
                             synchronized(running) {
@@ -134,13 +128,56 @@ public class Test {
                     try { running.wait(100); } catch (InterruptedException e) {}
                 }
             }
-            if (large) {
-                String vold = fmt(digestold.digest());
-                String vnew = fmt(digestnew.digest());
-                if (!vold.equals(vnew)) {
-                    System.out.println(file + ": mismatch");
-                } else if (!quiet) {
-                    System.out.println(file + ": match");
+            String msg = null;
+            if (oldlist.equals(newlist)) {
+                if (valid == null) {
+                    msg = "GOOD";
+                } else if (newlist.get(newlist.size() - 1).startsWith("fatalError") && !valid.booleanValue()) {
+                    msg = "GOOD (failed)";
+                } else if (newlist.get(newlist.size() - 1).startsWith("fatalError") && valid.booleanValue()) {
+                    msg = "SO-SO (failed identically, expected success)";
+                }
+            } else {
+                boolean newFail = newlist.get(newlist.size() - 1).startsWith("fatalError");
+                boolean oldFail = oldlist.get(oldlist.size() - 1).startsWith("fatalError");
+                if (valid == null) {
+                    if (newFail && oldFail) {
+                        msg = "BAD (both failed differently)";
+                    } else if (newFail) {
+                        msg = "BAD (BFO failed, system succeded)";
+                    } else if (oldFail) {
+                        msg = "BAD (BFO succeeded, system failed)";
+                    } else {
+                        msg = "BAD (differences)";
+                    }
+                } else if (valid.booleanValue()) {
+                    if (newFail && oldFail) {
+                        msg = "BAD (both failed differently, success expected)";
+                    } else if (newFail) {
+                        msg = "BAD (BFO failed, system succeded, success expected)";
+                    } else if (oldFail) {
+                        msg = "GOOD (BFO succeeded, system failed, success expected)";
+                    } else {
+                        msg = "BAD (expected success, with differences)";
+                    }
+                } else {
+                    if (newFail && oldFail) {
+                        msg = "BAD (both failed differently, failure expected)";
+                    } else if (newFail) {
+                        msg = "GOOD (BFO failed, system succeded, failure expected)";
+                    } else if (oldFail) {
+                        msg = "BAD (BFO succeeded, system failed, failure expected)";
+                    } else {
+                        msg = "BAD (expected failure, both succeededwith differences)";
+                    }
+                }
+            }
+            System.out.println("### " + file + ":   " + msg);
+            if (!quiet) {
+                Patch patch = DiffUtils.diff(oldlist, newlist);
+                List<String> out = UnifiedDiffUtils.generateUnifiedDiff("xerces/" + file, "bfo/" + file, oldlist, patch, 2);
+                for (String s : out) {
+                    System.out.println(s);
                 }
             }
         } else {
@@ -418,13 +455,21 @@ public class Test {
 
     //-----------------------------------------------
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] argsa) throws Exception {
         newfactory = new BFOSAXParserFactory();
         oldfactory = javax.xml.parsers.SAXParserFactory.newInstance();
         newfactory.setNamespaceAware(true);
         oldfactory.setNamespaceAware(true);
 
-        if (args.length == 0) {
+        List<String> args = new ArrayList<String>(Arrays.asList(argsa));
+
+        boolean filearg = false;
+        for (String s : args) {
+            if (!s.startsWith("--")) {
+                filearg = true;
+            }
+        }
+        if (!filearg) {
             File f = new File("samples/xmlconf/xmlconf.xml");
             List<Map<String,String>> tests = new ArrayList<Map<String,String>>();
             oldfactory.newSAXParser().parse(f, new DefaultHandler() {
@@ -467,37 +512,42 @@ public class Test {
                 }
             });
             List<String> l = new ArrayList<String>();
-            l.add("--both");
             for (Map<String,String> test : tests) {
                 String uri = "samples/xmlconf/" + test.get("uri");
                 l.add(uri.replaceAll("//*", "/"));
             }
-            args = l.toArray(new String[0]);
+            args.addAll(l);
         }
 
         boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false;
+        Boolean valid = null;
 
-        for (int i=0;i<args.length;i++) {
-            if (args[i].equals("--old")) {
+        for (int i=0;i<args.size();i++) {
+            String arg = args.get(i);
+            if (arg.equals("--old")) {
                 newparser = false;
                 oldparser = true;
-            } else if (args[i].equals("--new")) {
+            } else if (arg.equals("--new")) {
                 newparser = true;
                 oldparser = false;
-            } else if (args[i].equals("--both")) {
+            } else if (arg.equals("--both")) {
                 newparser = true;
                 oldparser = true;
-            } else if (args[i].equals("--decl")) {
+            } else if (arg.equals("--decl")) {
                 decl = true;
-            } else if (args[i].equals("--lexical")) {
+            } else if (arg.equals("--lexical")) {
                 lexical = true;
-            } else if (args[i].equals("--speed")) {
+            } else if (arg.equals("--speed")) {
                 speed = true;
-            } else if (args[i].equals("--digest")) {
+            } else if (arg.equals("--digest")) {
                 large = true;
-            } else if (args[i].equals("--number")) {
+            } else if (arg.equals("--number")) {
                 number = true;
-            } else if (args[i].equals("--quiet")) {
+            } else if (arg.equals("--valid")) {
+                valid = true;
+            } else if (arg.equals("--invalid")) {
+                valid = false;
+            } else if (arg.equals("--quiet")) {
                 quiet = true;
             } else {
                 Test test = new Test();
@@ -510,7 +560,8 @@ public class Test {
                 test.speed = speed;
                 test.number = number;
                 test.large = large;
-                test.run(args[i]);
+                test.valid = valid;
+                test.run(arg);
             }
         }
     }
