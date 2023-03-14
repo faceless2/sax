@@ -7,8 +7,8 @@ class Element {
     private final DTD dtd;
     private final String name, model;
     private final boolean hasText;
-    private final Map<String,AttValue> atts = new HashMap<String,AttValue>();
-    private Map<String,String> defaultatts;
+    private final Map<String,Attribute> atts = new HashMap<String,Attribute>();
+    private Map<String,Attribute> defaultatts;
     private String idattr;
 
     Element(DTD dtd, String name, String model) {
@@ -41,25 +41,21 @@ class Element {
                 throw new IllegalArgumentException("ID attr \"" + name + "\" cannot be " + mode);
             }
         }
-        atts.put(name, new AttValue(type, mode, value));
+        Attribute a = new Attribute(type, mode, value);
+        atts.put(name, a);
         if (value != null) {
             if (defaultatts == null) {
-                defaultatts = new HashMap<String,String>();
+                defaultatts = new HashMap<String,Attribute>();
             }
-            defaultatts.put(name, value);
+            defaultatts.put(name, a);
         }
     }
 
-    private static class AttValue {
-        final String type, mode, value;
-        AttValue(String type, String mode, String value) {
-            this.type = type;
-            this.mode = mode;
-            this.value = value;
-        }
+    Map<String,Attribute> getAttributes() {
+        return atts;
     }
 
-    Map<String,String> getAttributeDefaults() {
+    Map<String,Attribute> getAttributesWithDefaults() {
         return defaultatts;
     }
 

@@ -1664,9 +1664,9 @@ public class BFOXMLReader implements XMLReader, Locator {
             final Element element = dtd == null ? null : dtd.getElement(qName);
             Context ctx = new Context(qName, element, stack.isEmpty() ? null : stack.get(stack.size() - 1));
             BFOAttributes atts = null;
-            Map<String,String> defaultAtts = element == null ? null : element.getAttributeDefaults();
+            Map<String,Attribute> defaultAtts = element == null ? null : element.getAttributesWithDefaults();
             if (defaultAtts != null) {
-                defaultAtts = new HashMap<String,String>(defaultAtts);
+                defaultAtts = new HashMap<String,Attribute>(defaultAtts);
             }
             if (tmpatts != null) {
                 System.out.flush();
@@ -1703,6 +1703,34 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (ix == 0 && factory.xercescompat && reader.isXML11()) {
                             fatalError(reader, "Attribute " + fmt(attQName) + " has zero-length prefix");
                         }
+                        // "If the attribute type is not CDATA, then the XML processor must further process
+                        //  the normalized attribute value by discarding any leading and trailing space
+                        //  characters, and by replacing sequences of space characters by a
+                        //  single  character."
+                        //
+                        // on balance, most attributes will be CDATA, so check that first.
+
+                        Attribute a = element.getAttributes().get(attQName);
+                        if (a != null && !"CDATA".equals(a.getType())) {
+                            StringBuilder sb = new StringBuilder();
+                            boolean ws = false;
+                            for (int j=0;j<attValue.length();j++) {
+                                char c = attValue.charAt(j);
+                                if (c == ' ') {
+                                    if (sb.length() > 0) {
+                                        ws = true;
+                                    }
+                                } else {
+                                    if (ws) {
+                                        sb.append(' ');
+                                        ws = false;
+                                    }
+                                    sb.append(c);
+                                }
+                            }
+                            attValue = sb.toString();
+                        }
+
                         if (ix > 0) {
                             String prefix = attQName.substring(0, ix);
                             String localName = attQName.substring(ix + 1);
@@ -1729,9 +1757,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (atts == null) {
                     atts = new BFOAttributes();
                 }
-                for (Map.Entry<String,String> e : defaultAtts.entrySet()) {
+                for (Map.Entry<String,Attribute> e : defaultAtts.entrySet()) {
                     String attQName = e.getKey();
-                    String attValue = e.getValue();
+                    String attValue = e.getValue().getDefault();
                     int ix = attQName.indexOf(":");
                     if (ix > 0) {
                         String prefix = attQName.substring(0, ix);

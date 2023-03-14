@@ -129,9 +129,6 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                 }
                 out = uri.resolve(systemid).toString();
             }
-            if (out != null && out.startsWith("file:/") && !out.startsWith("file:///")) {
-                out = "file:///" + out.substring(6);
-            }
             return out;
         } catch (RuntimeException e) {
             throw e;
