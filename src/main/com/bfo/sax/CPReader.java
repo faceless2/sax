@@ -1,6 +1,7 @@
 package com.bfo.sax;
 
 import java.io.*;
+import java.nio.charset.*;
 import org.xml.sax.*;
 
 // CodePoint reader - returns codepoints or -1 on EOF
@@ -284,7 +285,7 @@ abstract class CPReader {
                 break;
             }
         }
-        String enc = "utf-8";
+        String enc = null; // "utf-8";
         int skip = 0;
         if (b[0] == (byte)0xfe && b[1] == (byte)0xff) {
             enc = "utf-16be";
@@ -299,29 +300,32 @@ abstract class CPReader {
             enc = "utf-16be";
         } else if (xml && b[0] == (byte)0x3c && b[1] == 0 && b[2] == (byte)0x3f && b[3] == (byte)0) {
             enc = "utf-16le";
-        } else if (xml && b[0] == '<') {
-            enc = "utf-8";
         }
-        if (enc.startsWith("utf-16") && (len&1) == 1) {
+        if (enc != null && enc.startsWith("utf-16") && (len&1) == 1) {
             b[len++] = (byte)in.read();
         }
-        final String prolog = new String(b, skip, len - skip, enc);
+        final String prolog = new String(b, skip, len - skip, enc == null ? "iso-8859-1" : enc);
         if (xml) {
             String s = prolog.replaceAll("\t\n\r", " ");
-            if (s.length() > 0 && s.charAt(s.length() - 1) == '>' && s.charAt(0) == '<' && Character.toLowerCase(s.charAt(1)) == 'x' && Character.toLowerCase(s.charAt(2)) == 'm' && Character.toLowerCase(s.charAt(3)) == 'l') {
-                s = s.substring(4).trim();
+            if (s.length() > 0 && s.charAt(s.length() - 1) == '>' && s.charAt(s.length() - 2) == '?' && s.charAt(0) == '<' && s.charAt(1) == '?' && Character.toLowerCase(s.charAt(2)) == 'x' && Character.toLowerCase(s.charAt(3)) == 'm' && Character.toLowerCase(s.charAt(4)) == 'l') {
+                s = s.substring(5, s.length() - 2).trim();
                 if (s.startsWith("version") && s.indexOf(" ") > 0) {
                     s = s.substring(s.indexOf(" ")).trim();
-                    if (s.startsWith("encoding=")) {
-                        s = s.substring(9);
-                        c = s.charAt(0);
-                        int i;
-                        if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
+                }
+                if (s.startsWith("encoding=")) {
+                    s = s.substring(9);
+                    c = s.charAt(0);
+                    int i;
+                    if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
+                        if (enc == null) {
                             enc = s.substring(1, i).toLowerCase();
                         }
                     }
                 }
             }
+        }
+        if (enc == null) {
+            enc = "utf-8";
         }
         CPReader r;
         if (enc.equals("utf-8") || enc.equals("utf8")) {
@@ -391,7 +395,14 @@ abstract class CPReader {
                 }
             };
         } else {
-            r = getReader(new InputStreamReader(in, enc), publicId, systemId);
+            if ("shift_jis".equals(enc)) {
+                enc = "windows-31j";
+            }
+            if (Charset.isSupported(enc)) {
+                r = getReader(new InputStreamReader(in, enc), publicId, systemId);
+            } else {
+                throw new IOException("Unsupported encoding \"" + enc + "\"");
+            }
         }
         CPReader r1 = getReader(prolog, publicId, systemId, 1, 1, false);
         return getReader(r1, r, null);

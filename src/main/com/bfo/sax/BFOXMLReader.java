@@ -20,6 +20,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private DTDHandler dtdHandler;
     private ErrorHandler errorHandler;
     private List<Context> stack = new ArrayList<Context>();
+    private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
@@ -766,9 +767,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else if (entity.isExternal()) {
                         fatalError(reader, "Invalid external reference &" + entity.getName() + "; in AttValue");
                     } else if (entity.isMarkup()) {
-                        CPReader entityReader = entity.getReader(null, null, reader.isXML11());
-                        readAttValue(entityReader, -1); // recursive!
-                        entityReader.close();
+                        if (entityStack.contains(entity)) {
+                            fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                        } else {
+                            entityStack.add(entity);
+                            CPReader entityReader = entity.getReader(null, null, reader.isXML11());
+                            readAttValue(entityReader, -1); // recursive!
+                            entityReader.close();
+                            entityStack.remove(entityStack.size() - 1);
+                        }
                     } else {
                         append(entity.getValue());
                     }
@@ -1059,9 +1066,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (lexicalHandler != null) {
                     lexicalHandler.startEntity("%" + entity.getName());
                 }
-                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                readInternalSubset(entityReader);
-                entityReader.close();
+                if (entityStack.contains(entity)) {
+                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                } else {
+                    entityStack.add(entity);
+                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    readInternalSubset(entityReader);
+                    entityReader.close();
+                    entityStack.remove(entityStack.size() - 1);
+                }
                 if (lexicalHandler != null) {
                     lexicalHandler.endEntity("%" + entity.getName());
                 }
@@ -1131,9 +1144,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (lexicalHandler != null) {
                     lexicalHandler.startEntity("%" + entity.getName());
                 }
-                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                readExternalSubset(entityReader, false);
-                entityReader.close();
+                if (entityStack.contains(entity)) {
+                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                } else {
+                    entityStack.add(entity);
+                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    readExternalSubset(entityReader, false);
+                    entityReader.close();
+                    entityStack.remove(entityStack.size() - 1);
+                }
                 if (lexicalHandler != null) {
                     lexicalHandler.endEntity("%" + entity.getName());
                 }
@@ -1543,6 +1562,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 defaultAtts = new HashMap<String,String>(defaultAtts);
             }
             if (tmpatts != null) {
+                System.out.flush();
                 for (int i=0;i<tmpatts.size();i+=2) {
                     String attQName = tmpatts.get(i);
                     if (attQName.equals("xmlns")) {
@@ -1579,14 +1599,22 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (ix > 0) {
                             String prefix = attQName.substring(0, ix);
                             String localName = attQName.substring(ix + 1);
+                            if (localName.indexOf(':') >= 0) {
+                                fatalError(reader, "Attribute " + fmt(attQName) + " not a valid QName");
+                            }
                             if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
                                 fatalError(reader, "Attribute " + fmt(attQName) + " has zero-length localName");
                             }
                             String uri = ctx.namespace(prefix);
+                            if (uri == null) {
+                                fatalError(reader, "The prefix " + fmt(prefix) + " for attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
+                            }
                             atts.add(uri, localName, attQName, "CDATA", attValue);
                         } else {
                             atts.add("", attQName, attQName, "CDATA", attValue);
                         }
+                    } else {
+                        i++;
                     }
                 }
             }
@@ -1602,6 +1630,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                         String prefix = attQName.substring(0, ix);
                         String localName = attQName.substring(ix + 1);
                         String uri = ctx.namespace(prefix);
+                        if (uri == null) {
+                            fatalError(reader, "The prefix " + fmt(prefix) + " for default attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
+                        }
                         atts.add(uri, localName, attQName, "CDATA", attValue);
                     } else {
                         atts.add("", attQName, attQName, "CDATA", attValue);
@@ -1616,10 +1647,16 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (ix > 0) {
                 String prefix = qName.substring(0, ix);
                 String localName = qName.substring(ix + 1);
+                if (localName.indexOf(':') >= 0) {
+                    fatalError(reader, "Element " + fmt(qName) + " not a valid QName");
+                }
                 if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
                     fatalError(reader, "Element " + fmt(qName) + " has zero-length localName");
                 }
                 uri = ctx.namespace(prefix);
+                if (uri == null) {
+                    fatalError(reader, "The prefix " + fmt(prefix) + " for element " + fmt(qName) + " is not bound.");
+                }
                 if (contentHandler != null) {
                     contentHandler.startElement(uri, localName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
                     if (selfClosing) {
@@ -1846,9 +1883,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                         lexicalHandler.startEntity(entity.getName());
                     }
                     if (entity.isMarkup()) {
-                        CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                        readContent(entityReader, true);
-                        entityReader.close();
+                        if (entityStack.contains(entity)) {
+                            fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                        } else {
+                            entityStack.add(entity);
+                            CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                            readContent(entityReader, true);
+                            entityReader.close();
+                            entityStack.remove(entityStack.size() - 1);
+                        }
                     } else {
                         append(entity.getValue());
                     }
