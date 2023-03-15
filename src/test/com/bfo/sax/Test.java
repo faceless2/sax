@@ -17,7 +17,7 @@ public class Test {
 
     private static SAXParserFactory newfactory, oldfactory;
 
-    private boolean newparser, oldparser, decl, lexical, speed, quiet, large, number;
+    private boolean newparser, oldparser, decl, lexical, speed, quiet, large, number, progress;
     private Boolean valid;              // expectation or null for none
 
     private void run(String file) {
@@ -256,9 +256,11 @@ public class Test {
         public void msg(String msg, MyHandler handler) throws SAXException;
     }
 
-    private static class MyHandler extends DefaultHandler2 {
+    private class MyHandler extends DefaultHandler2 {
         private StringBuilder chars = new StringBuilder(), ignorable = new StringBuilder();
         private final Callback callback;
+        private final long start = System.currentTimeMillis();
+        private int count = 0;
         MyHandler(Callback callback) {
             this.callback = callback;
         }
@@ -279,6 +281,9 @@ public class Test {
                 flush();
             }
             callback.msg(s, this);
+            if (progress && (++count % 1000000) == 0) {
+                System.out.println(count + " records at " + (System.currentTimeMillis() - start) + "ms");
+            }
         }
         public void attributeDecl(String eName, String aName, String type, String mode, String value) throws SAXException {
             msg("attributeDecl(" + fmt(eName)+", "+fmt(aName)+", "+fmt(type)+", "+fmt(mode)+", "+fmt(value) + ")");
@@ -554,7 +559,7 @@ public class Test {
             args.addAll(l);
         }
 
-        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false;
+        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false, progress = false;
         Boolean valid = null;
 
         for (int i=0;i<args.size();i++) {
@@ -574,6 +579,8 @@ public class Test {
                 lexical = true;
             } else if (arg.equals("--speed")) {
                 speed = true;
+            } else if (arg.equals("--progress")) {
+                progress = true;
             } else if (arg.equals("--digest")) {
                 large = true;
             } else if (arg.equals("--number")) {
@@ -593,6 +600,7 @@ public class Test {
                 test.decl = decl;
                 test.lexical = lexical;
                 test.speed = speed;
+                test.progress = progress;
                 test.quiet = quiet;
                 test.speed = speed;
                 test.number = number;
