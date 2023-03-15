@@ -9,19 +9,22 @@ import java.io.*;
 
 public class BFOSAXParserFactory extends SAXParserFactory {
 
-    private boolean entityResolver2 = true;
+    private final BFOXMLReader FEATUREHOLDER = new BFOXMLReader(this);
     boolean xercescompat = true;
 
+    public static final String FEATURE_THREADS = "http://bfo.com/sax/features/threads";
+
+    public List<String> getSupportedFeatures() {
+        List<String> l = new ArrayList<String>();
+        l.add("http://xml.org/sax/features/namespaces");
+        l.add("http://xml.org/sax/features/namespace-prefixes");
+        l.add("http://xml.org/sax/features/use-entity-resolver2");
+        l.add(FEATURE_THREADS);
+        return Collections.<String>unmodifiableList(l);
+    }
+
     @Override public boolean getFeature(String name)  throws SAXNotRecognizedException, SAXNotSupportedException {
-        if ("http://xml.org/sax/features/namespaces".equals(name)) {
-            return true;
-        } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
-            return false;
-        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
-            return entityResolver2;
-        } else {
-            return false;
-        }
+        return FEATUREHOLDER.getFeature(name);
     }
     @Override public Schema getSchema() {
         return null;
@@ -37,25 +40,17 @@ public class BFOSAXParserFactory extends SAXParserFactory {
     }
     @Override public SAXParser newSAXParser() {
         BFOSAXParser sax = new BFOSAXParser(this);
-        try {
-            sax.getXMLReader().setFeature("http://xml.org/sax/features/use-entity-resolver2", getFeature("http://xml.org/sax/features/use-entity-resolver2"));
-        } catch (Exception e) {}
+        for (String s : getSupportedFeatures()) {
+            try {
+                sax.getXMLReader().setFeature(s, FEATUREHOLDER.getFeature(s));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
         return sax;
     }
     @Override public void setFeature(String name, boolean value) throws SAXNotRecognizedException, SAXNotSupportedException {
-        if ("http://xml.org/sax/features/namespaces".equals(name)) {
-            if (value == false) {
-                throw new SAXNotSupportedException(name + " only supports true");
-            }
-        } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
-            if (value == false) {
-                throw new SAXNotSupportedException(name + " only supports false");
-            }
-        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
-            entityResolver2 = value; 
-        } else {
-            throw new SAXNotRecognizedException(name);
-        }
+        FEATUREHOLDER.setFeature(name, value);
     }
     @Override public void setNamespaceAware(boolean awareness) {
         if (!awareness) {

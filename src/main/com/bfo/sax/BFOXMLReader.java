@@ -53,10 +53,27 @@ public class BFOXMLReader implements XMLReader, Locator {
            return false;
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
            return entityResolver2;
-       } else if ("http://bfo.com/sax/features/threads".equals(name)) {
+       } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
            return multiThreaded;
        } else {
            return false;
+       }
+    }
+    @Override public void setFeature(String name, boolean value) throws SAXNotRecognizedException, SAXNotSupportedException {
+       if ("http://xml.org/sax/features/namespaces".equals(name)) {
+           if (value != true) {
+               throw new SAXNotSupportedException(name + " only supports true");
+           }
+       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
+           if (value != false) {
+               throw new SAXNotSupportedException(name + " only supports false");
+           }
+       } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
+           entityResolver2 = value;
+       } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
+           multiThreaded = value;
+       } else {
+           throw new SAXNotRecognizedException(name);
        }
     }
     @Override public Object getProperty(String name) throws SAXNotRecognizedException, SAXNotSupportedException {
@@ -70,38 +87,6 @@ public class BFOXMLReader implements XMLReader, Locator {
             return inputBufferSize;
         }
         throw new SAXNotRecognizedException(name);
-    }
-    @Override public void parse(String systemId) throws SAXException, IOException {
-        parse(new InputSource(systemId));
-    }
-    @Override public void setContentHandler(ContentHandler handler) {
-        this.contentHandler = handler;
-    }
-    @Override public void setDTDHandler(DTDHandler handler) {
-        this.dtdHandler = handler;
-    }
-    @Override public void setEntityResolver(EntityResolver resolver) {
-        this.entityResolver = resolver;
-    }
-    @Override public void setErrorHandler(ErrorHandler handler) {
-        this.errorHandler = handler;
-    }
-    @Override public void setFeature(String name, boolean value) throws SAXNotRecognizedException, SAXNotSupportedException {
-       if ("http://xml.org/sax/features/namespaces".equals(name)) {
-           if (value == false) {
-               throw new SAXNotSupportedException(name + " only supports true");
-           }
-       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
-           if (value == false) {
-               throw new SAXNotSupportedException(name + " only supports false");
-           }
-       } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
-           entityResolver2 = value;
-       } else if ("http://bfo.com/sax/features/threads".equals(name)) {
-           multiThreaded = value;
-       } else {
-           throw new SAXNotRecognizedException(name);
-       }
     }
     @Override public void setProperty(String name, Object value) throws SAXNotRecognizedException, SAXNotSupportedException {
         if ("http://xml.org/sax/properties/lexical-handler".equals(name)) {
@@ -127,6 +112,21 @@ public class BFOXMLReader implements XMLReader, Locator {
         } else {
             throw new SAXNotRecognizedException(name);
         }
+    }
+    @Override public void parse(String systemId) throws SAXException, IOException {
+        parse(new InputSource(systemId));
+    }
+    @Override public void setContentHandler(ContentHandler handler) {
+        this.contentHandler = handler;
+    }
+    @Override public void setDTDHandler(DTDHandler handler) {
+        this.dtdHandler = handler;
+    }
+    @Override public void setEntityResolver(EntityResolver resolver) {
+        this.entityResolver = resolver;
+    }
+    @Override public void setErrorHandler(ErrorHandler handler) {
+        this.errorHandler = handler;
     }
 
     @Override public int getColumnNumber() {
@@ -788,7 +788,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             while ((c = reader.read()) != quote) {
                 if (c == '%') {
                     Entity entity = readPEReference(reader);
-                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    CPReader entityReader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                     if (entityReader == null) {
                         error(reader, "Unresolved parameter entity %" + entity.getName() + ";");
                     }
@@ -1125,7 +1125,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         CPReader dtdreader = null;
         if (pubid == null && sysid == null) {
             // First, to match Xerces
-            dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+            dtdreader = dtdentity.getReader(q, reader.getSystemId(), reader.isXML11());
         }
         if (q.isLexicalHandler()) {
             q.startDTD(name, pubid, sysid);
@@ -1138,7 +1138,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             internalSubset.close();
         }
         if (pubid != null || sysid != null) {
-            dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+            dtdreader = dtdentity.getReader(q, reader.getSystemId(), reader.isXML11());
         }
         if (dtdreader != null) {
             if (q.isLexicalHandler()) {
@@ -1205,7 +1205,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
                     entityStack.add(entity);
-                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    CPReader entityReader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                     if (entity.isExternal()) {
                         readExternalSubset(entityReader, true);
                     } else {
@@ -1290,7 +1290,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
                     entityStack.add(entity);
-                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    CPReader entityReader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                     readExternalSubset(entityReader, false);
                     entityReader.close();
                     entityStack.remove(entityStack.size() - 1);
@@ -2157,7 +2157,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
                             entityStack.add(entity);
-                            CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                            CPReader entityReader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                             readContent(entityReader, true);
                             entityReader.close();
                             entityStack.remove(entityStack.size() - 1);
@@ -2191,8 +2191,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                 } else {
                     bba = 0;
                 }
-                if (inputBufferSize > 0 && buf.length > inputBufferSize) {
-                    start = flush(start, true);
+                if (inputBufferSize > 0 && len > inputBufferSize) {
+//                    start = flush(start, true);
                 }
             }
             c = reader.read();
@@ -2264,7 +2264,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (entityStack.contains(entity)) {
                     error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
-                    reader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    reader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                     entityStack.add(entity);
                     readerStack.add(reader);
                     c = reader.read();

@@ -91,6 +91,7 @@
       </classpath>
       <arg value="--both"/>
       <arg value="--quiet" if:true="${quiet}"/>
+      <arg value="--threads" if:true="${threads}"/>
     </java>
   </target>
 

@@ -20,6 +20,7 @@ public class Test {
     private boolean newparser, oldparser, decl, lexical, speed, quiet, large, number, progress;
     private Boolean valid;              // expectation or null for none
 
+    @SuppressWarnings("unchecked")
     private void run(String file) {
         // newparser!=null && oldparser!=null && large
         //   set digest, run in two threads, compare results at end
@@ -628,6 +629,10 @@ public class Test {
                 valid = null;
             } else if (arg.equals("--quiet")) {
                 quiet = true;
+            } else if (arg.equals("--threads")) {
+                newfactory.setFeature("http://bfo.com/sax/features/threads", true);
+            } else if (arg.equals("--nothreads")) {
+                newfactory.setFeature("http://bfo.com/sax/features/threads", false);
             } else {
                 Test test = new Test();
                 test.newparser = newparser;
