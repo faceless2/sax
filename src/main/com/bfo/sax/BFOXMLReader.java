@@ -22,6 +22,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private List<Context> stack = new ArrayList<Context>();
     private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
+    private boolean fromFatalError;
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
         if (factory == null) {
@@ -143,11 +144,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 in = in2;
             }
         }
-        CPReader reader = CPReader.normalize(CPReader.getReader(in), false);
-        curreader = reader;
-        if (contentHandler != null) {
-            contentHandler.setDocumentLocator(this);
-        }
+        curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
         final EntityResolver oldres = entityResolver;
         if (!entityResolver2 && entityResolver instanceof EntityResolver2) {
             entityResolver = new EntityResolver() {
@@ -156,8 +153,25 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             };
         }
-        readDocument(reader);
-        entityResolver = oldres;
+        try {
+            if (contentHandler != null) {
+                contentHandler.setDocumentLocator(this);
+                contentHandler.startDocument();
+            }
+            curreader = CPReader.normalize(CPReader.getReader(in), false);
+            readDocument(curreader);
+            if (contentHandler != null) {
+                contentHandler.endDocument();
+            }
+        } catch (SAXException e) {
+            if (!fromFatalError) {
+                fatalError(curreader, e.getMessage(), e);
+            } else {
+                throw e;
+            }
+        } finally {
+            entityResolver = oldres;
+        }
     }
 
 
@@ -165,6 +179,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         String name;
         Context parent;
         Map<String,String> map;
+        List<String> prefixes;
         Element element;
         Context(String name, Element element, Context parent) {
             this.name = name;
@@ -240,7 +255,15 @@ public class BFOXMLReader implements XMLReader, Locator {
     // PEReference [Parameter entity references] are recognized anywhere in the DTD (internal and external subsets and external parameter entities), except in literals [EntityValue, AttValue, SystemLiteral, PubidLiteral], processing instructions, comments, and the contents of ignored conditional sections (see 3.4 Conditional Sections). They are also recognized in entity value literals [EntityValue]. The use of parameter entities in the internal subset is restricted as described below.
 
     private String fatalError(final CPReader reader, String msg) throws SAXException, IOException {
+        return fatalError(reader, msg, null);
+    }
+
+    private String fatalError(final CPReader reader, String msg, Throwable t) throws SAXException, IOException {
         SAXParseException e = new SAXParseException(msg, reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
+        if (t != null) {
+            e.initCause(t);
+        }
+        fromFatalError = true;
         if (errorHandler != null) {
             errorHandler.fatalError(e);
         }
@@ -429,22 +452,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             sb.append(')');
             c = reader.read();
         } else if (!first) {
-            if (c == '%') {
-                Entity entity = readPEReference(reader);
-                c = reader.read();
-                if (entityStack.contains(entity)) {
-                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
-                } else {
-                    entityStack.add(entity);
-                    CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                    sb.append(entityReader.asString());
-                    entityReader.close();
-                    entityStack.remove(entityStack.size() - 1);
-                }
-            } else {
-                String s = readName(reader);
-                sb.append(s);
-            }
+            String s = readName(reader);
+            sb.append(s);
         }
         if (c == '?' || c == '+' || c == '*') {
             sb.append((char)c);
@@ -480,22 +489,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                             readS(reader);
                         }
                         sb.append('|');
-                        if (c == '%') {
-                            Entity entity = readPEReference(reader);
-                            c = reader.read();
-                            if (entityStack.contains(entity)) {
-                                fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
-                            } else {
-                                entityStack.add(entity);
-                                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                                sb.append(entityReader.asString());
-                                entityReader.close();
-                                entityStack.remove(entityStack.size() - 1);
-                            }
-                        } else {
-                            s = readName(reader);
-                            sb.append(s);
-                        }
+                        s = readName(reader);
+                        sb.append(s);
                         if (isS(c)) {
                             readS(reader);
                         }
@@ -525,19 +520,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readElementContent(reader, sb, true);
             }
             return sb.toString();
-        } else if (c == '%') {
-            Entity entity = readPEReference(reader);
-            c = reader.read();
-            if (entityStack.contains(entity)) {
-                return fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
-            } else {
-                entityStack.add(entity);
-                CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                String s = entityReader.asString();
-                entityReader.close();
-                entityStack.remove(entityStack.size() - 1);
-                return s;
-            }
         } else {
             String s = readName(reader);
             if (s.equals("EMPTY") || s.equals("ANY")) {
@@ -898,28 +880,35 @@ public class BFOXMLReader implements XMLReader, Locator {
             lexicalHandler.startCDATA();
         }
         int start = len;
-        while ((c=reader.read()) >= 0) {
-            if (c == ']') {
-                if ((c=reader.read()) == ']') {
-                    if ((c=reader.read()) == '>') {
-                        contentHandler.characters(buf, start, len - start);
-                        if (lexicalHandler != null) {
-                            lexicalHandler.endCDATA();
-                        }
-                        len = start;
-                        return;
-                    } else {
-                        append(']');
-                        append(']');
-                        append(c);
-                    }
-                } else {
-                    append(']');
-                    append(c);
+        int d = 0;
+        c = reader.read();
+        while (c >= 0) {
+            if (c == ']' && d == 0) {
+                d = 1;
+            } else if (c == ']' && d == 1) {
+                d = 2;
+            } else if (c == ']' && d == 2) {
+                append(']');
+            } else if (c == '>' && d == 2) {
+                contentHandler.characters(buf, start, len - start);
+                if (lexicalHandler != null) {
+                    lexicalHandler.endCDATA();
                 }
+                len = start;
+                return;
+            } else if (d == 2) {
+                append(']');
+                append(']');
+                append(c);
+                d = 0;
+            } else if (d == 1) {
+                append(']');
+                append(c);
+                d = 0;
             } else {
                 append(c);
             }
+            c = reader.read();
         }
         fatalError(reader, "EOF in CDATA");
     }
@@ -1031,13 +1020,42 @@ public class BFOXMLReader implements XMLReader, Locator {
             final int line = reader.getLineNumber();
             final int col = reader.getColumnNumber();
             StringBuilder sb = new StringBuilder();
-            while (c != ']' && c >= 0) {
+            int quote = 0;
+            while (c >= 0 && (c != ']' || quote != 0)) {
+                // We have to identity comments, because otherwise
+                // quotes in comments break the "in quote" test
+                if (c == '<') {
+                    sb.append('<');
+                    c = reader.read();
+                    if (c == '!') {
+                        sb.append('!');
+                        c = reader.read();
+                        if (c == '-') {
+                            sb.append('-');
+                            LexicalHandler lh = lexicalHandler;
+                            lexicalHandler = new DefaultHandler2() {
+                                public void comment(char[] buf, int off, int len) {
+                                    sb.append('-');
+                                    sb.append(buf, off, len);
+                                    sb.append("--");
+                                }
+                            };
+                            readComment(reader);
+                            lexicalHandler = lh;
+                        }
+                    }
+                }
                 if (c < 0x10000) {
                     sb.append((char)c);
                 } else {
                     c = CPReader.toUTF16(c);
                     sb.append((char)(c>>16));
                     sb.append((char)c);
+                }
+                if (quote == 0 && (c == '"' || c == '\'')) {
+                    quote = c;
+                } else if (c == quote && quote > 0) {
+                    quote = 0;
                 }
                 c = reader.read();
             }
@@ -1139,7 +1157,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                 } else {
                     entityStack.add(entity);
                     CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
-                    readInternalSubset(entityReader);
+                    if (entity.isExternal()) {
+                        readExternalSubset(entityReader, true);
+                    } else {
+                        readInternalSubset(entityReader);
+                    }
                     entityReader.close();
                     entityStack.remove(entityStack.size() - 1);
                 }
@@ -1320,7 +1342,8 @@ public class BFOXMLReader implements XMLReader, Locator {
      *
      * We've just read "ATTLIST"
      */
-    private void readATTLIST(final CPReader reader) throws SAXException, IOException {
+    private void readATTLIST(CPReader reader) throws SAXException, IOException {
+        reader = new PEReferenceExpandingCPReader(reader);
         readS(reader);
         String name = readName(reader);
         if (isS(c)) {
@@ -1337,7 +1360,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                 attMode = "#" + readName(reader);
                 if (attMode.equals("#FIXED")) {
                     readS(reader);
+                    ((PEReferenceExpandingCPReader)reader).setExpanding(false);
                     defaultValue = readAttValue(reader, c);
+                    ((PEReferenceExpandingCPReader)reader).setExpanding(true);
                     c = reader.read();
                 } else if (attMode.equals("#IMPLIED") || attMode.equals("#REQUIRED")) {
                     defaultValue = null;
@@ -1346,7 +1371,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             } else {
                 attMode = "#FIXED";
+                ((PEReferenceExpandingCPReader)reader).setExpanding(false);
                 defaultValue = readAttValue(reader, c);
+                ((PEReferenceExpandingCPReader)reader).setExpanding(true);
                 c = reader.read();
             }
             if (isS(c)) {
@@ -1374,10 +1401,12 @@ public class BFOXMLReader implements XMLReader, Locator {
                     }
                 }
                 Element elt = dtd.getElement(name);
-                if (elt != null) {
-                    elt.attributeDecl(attName, attType, attMode, defaultValue);
+                if (elt == null) {
+                    elt = new Element(dtd, name, null); // placeholder elt
+                    dtd.addElement(elt);
                 }
-            } catch (Exception e) {
+                elt.attributeDecl(attName, attType, attMode, defaultValue);
+            } catch (IllegalStateException e) {
                 fatalError(reader, e.getMessage());
             }
             if (declHandler != null) {
@@ -1386,7 +1415,8 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
-    private void readELEMENT(final CPReader reader) throws SAXException, IOException {
+    private void readELEMENT(CPReader reader) throws SAXException, IOException {
+        reader = new PEReferenceExpandingCPReader(reader);
         readS(reader);
         String name = readName(reader);
         c = reader.read();
@@ -1399,8 +1429,13 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         if (c == '>') {
             try {
-                dtd.addElement(new Element(dtd, name, contentSpec));
-            } catch (Exception e) {
+                Element elt = dtd.getElement(name);
+                if (elt == null) {
+                    dtd.addElement(elt = new Element(dtd, name, contentSpec));
+                } else {
+                    elt.setModel(contentSpec);
+                }
+            } catch (RuntimeException e) {
                 fatalError(reader, e.getMessage());
             }
             if (declHandler != null) {
@@ -1411,11 +1446,12 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
-    private void readNOTATION(final CPReader reader) throws SAXException, IOException {
+    private void readNOTATION(CPReader reader) throws SAXException, IOException {
         readS(reader);
         String name = readName(reader);
         readS(reader);
         String pubid = null, sysid = null;
+        reader = new PEReferenceExpandingCPReader(reader);
         String s = readName(reader);
         if (s.equals("SYSTEM")) {
             readS(reader);
@@ -1534,6 +1570,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                 fatalError(reader, "invalid prolog standalone \"" + standalone + "\"");
             }
         } else {
+            if (encoding == null) {
+                fatalError(reader, "invalid entity prolog, no encoding");
+            }
             if (standalone != null) {
                 fatalError(reader, "invalid entity prolog, found standalone \"" + standalone + "\"");
             }
@@ -1614,6 +1653,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                     contentHandler.endElement(uri, qName, qName);
                 }
             }
+            if (contentHandler != null && ctx.prefixes != null) {
+                for (String s : ctx.prefixes) {
+                    contentHandler.endPrefixMapping(s);
+                }
+            }
         } else {
             fatalError(reader, "Bad endElement " + hex(c));
         }
@@ -1676,14 +1720,25 @@ public class BFOXMLReader implements XMLReader, Locator {
                         String attValue = tmpatts.get(i + 1);
                         if (contentHandler != null) {
                             contentHandler.startPrefixMapping("", attValue);
+                            if (ctx.prefixes == null) {
+                                ctx.prefixes = new ArrayList<String>();
+                            }
+                            ctx.prefixes.add("");
                         }
                         ctx.register("", attValue);
                         tmpatts.set(i, null);
                     } else if (attQName.startsWith("xmlns:")) {
                         String prefix = attQName.substring(6);
+                        if (prefix.equals("xmlns") || prefix.equals("xml")) {
+                            fatalError(reader, "Can't redefine " + fmt(prefix) + " prefix");
+                        }
                         String attValue = tmpatts.get(i + 1);
                         if (contentHandler != null) {
                             contentHandler.startPrefixMapping(prefix, attValue);
+                            if (ctx.prefixes == null) {
+                                ctx.prefixes = new ArrayList<String>();
+                            }
+                            ctx.prefixes.add(prefix);
                         }
                         ctx.register(prefix, attValue);
                         tmpatts.set(i, null);
@@ -1811,13 +1866,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                     }
                 }
             }
+            if (selfClosing && contentHandler != null && ctx.prefixes != null) {
+                for (String s : ctx.prefixes) {
+                    contentHandler.endPrefixMapping(s);
+                }
+            }
         }
     }
 
     private void readDocument(final CPReader reader) throws IOException, SAXException {
-        if (contentHandler != null) {
-            contentHandler.startDocument();
-        }
         // Start by reading the prolog
         //
         // prolog  ::= XMLDecl? Misc* (doctypedecl Misc*)?
@@ -1914,9 +1971,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                 fatalError(reader, "Bad token " + hex(c));
             }
             c = reader.read();
-        }
-        if (contentHandler != null) {
-            contentHandler.endDocument();
         }
     }
 
@@ -2074,6 +2128,70 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         sb.append("\"");
         return sb.toString();
+    }
+
+    /**
+     * A PEReference expanding reader
+     */
+    private class PEReferenceExpandingCPReader extends CPReader {
+        private final CPReader freader;
+        private CPReader reader;
+        private List<CPReader> readerStack;
+        private List<Entity> entityStack;
+        private boolean expanding = true;
+
+        PEReferenceExpandingCPReader(CPReader r) {
+            this.freader = r;
+            this.reader = freader;
+        }
+
+        void setExpanding(boolean expanding) {
+            this.expanding = expanding;
+        }
+
+        @Override public int read() throws SAXException, IOException {
+            int c = reader.read();
+            while (c == '%' && expanding) {
+                Entity entity = readPEReference(reader);
+                if (entityStack == null) {
+                    entityStack = new ArrayList<Entity>();
+                    readerStack = new ArrayList<CPReader>();
+                }
+                if (entityStack.contains(entity)) {
+                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                } else {
+                    reader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
+                    entityStack.add(entity);
+                    readerStack.add(reader);
+                    c = reader.read();
+                }
+            }
+            if (c < 0 && reader != freader) {
+                reader.close();
+                while (c < 0 && !readerStack.isEmpty()) {
+                    entityStack.remove(entityStack.size() - 1);
+                    readerStack.remove(readerStack.size() - 1);
+                    reader = readerStack.isEmpty() ? freader : readerStack.get(readerStack.size() - 1);
+                    c = reader.read();
+                }
+            }
+            return c;
+        }
+        @Override public String getPublicId() {
+            return reader.getPublicId();
+        }
+        @Override public String getSystemId() {
+            return reader.getSystemId();
+        }
+        @Override public int getLineNumber() {
+            return reader.getLineNumber();
+        }
+        @Override public int getColumnNumber() {
+            return reader.getColumnNumber();
+        }
+        @Override public void close() throws IOException {
+            reader.close();
+        }
     }
 
 }

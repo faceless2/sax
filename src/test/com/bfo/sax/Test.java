@@ -103,16 +103,15 @@ public class Test {
                             InputStream in = new BufferedInputStream(new FileInputStream(file));
                             XMLReader r = (old?oldfactory:newfactory).newSAXParser().getXMLReader();
                             parse(file, r, (old?handlerold:handlernew));
-                        } catch (SAXException e) {
-                            // This will have been logged!
                         } catch (Exception e) {
-                            StringWriter w = new StringWriter();
-                            e.printStackTrace(new PrintWriter(w));
-                            List<String> l = Arrays.asList(w.toString().split("\n"));
-                            if (old) {
-                                oldlist.addAll(l);
-                            } else {
-                                newlist.addAll(l);
+                            List<String> list = old ? oldlist : newlist;
+                            boolean fail = !list.isEmpty() && list.get(list.size() - 1).startsWith("fatalError");
+                            if (!fail) {
+                                StringWriter w = new StringWriter();
+                                e.printStackTrace(new PrintWriter(w));
+                                List<String> l = new ArrayList<String>(Arrays.asList(w.toString().split("\n")));
+                                list.addAll(l);
+                                list.add("fatalError: " + e.getClass().getName());
                             }
                         } finally {
                             synchronized(running) {
@@ -129,8 +128,8 @@ public class Test {
                 }
             }
             String msg = null;
-            boolean newFail = newlist.get(newlist.size() - 1).startsWith("fatalError");
-            boolean oldFail = oldlist.get(oldlist.size() - 1).startsWith("fatalError");
+            boolean newFail = !newlist.isEmpty() && newlist.get(newlist.size() - 1).startsWith("fatalError");
+            boolean oldFail = !oldlist.isEmpty() && oldlist.get(oldlist.size() - 1).startsWith("fatalError");
             boolean diff = true;
             if (oldlist.equals(newlist)) {
                 if (valid == null) {
@@ -411,22 +410,31 @@ public class Test {
         return s;
     }
 
-    private static String fmt(Attributes a) {
+    private static String fmt(Attributes atts) {
         StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        for (int i=0;i<a.getLength();i++) {
-            if (i > 0) {
-               sb.append(", ");
+        List<Integer> index = new ArrayList<Integer>();
+        for (int i=0;i<atts.getLength();i++) {
+            index.add(i);
+        }
+        Collections.<Integer>sort(index, new Comparator<Integer>() {
+            public int compare(Integer a, Integer b) {
+                return atts.getQName(a).compareTo(atts.getQName(b));
             }
-            String uri = a.getURI(i);
+        });
+        sb.append("{");
+        for (Integer i : index) {
+            if (sb.length() > 1) {
+                sb.append(", ");
+            }
+            String uri = atts.getURI(i);
             if (uri.equals("")) {
-                sb.append(fmt(a.getQName(i)) + "=" + fmt(a.getValue(i)));
+                sb.append(fmt(atts.getQName(i)) + "=" + fmt(atts.getValue(i)));
             } else {
-                String u = fmt(a.getURI(i));
-                String q = fmt(a.getQName(i));
+                String u = fmt(atts.getURI(i));
+                String q = fmt(atts.getQName(i));
                 q = q.substring(1, q.length() - 1);
                 u = u.substring(1, u.length() - 1);
-                sb.append("\"{" + uri + "}" + q + "\"=" + fmt(a.getValue(i)));
+                sb.append("\"{" + uri + "}" + q + "\"=" + fmt(atts.getValue(i)));
             }
         }
         sb.append("}");
