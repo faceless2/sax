@@ -138,7 +138,7 @@ abstract class CPReader {
             }
 
             @Override public String toString() {
-                return "{normalize" + reader + "}";
+                return "{normalize" + reader + " line="+getLineNumber()+" col="+getColumnNumber()+"}";
             }
 
             @Override public void close() throws IOException {
@@ -242,7 +242,7 @@ abstract class CPReader {
                 return xml11;
             }
             @Override public String toString() {
-                return "{string src="+systemId+"}";
+                return "{string val="+BFOXMLReader.fmt(s)+" src="+systemId+" line="+getLineNumber()+" col="+getColumnNumber()+"}";
             }
         };
     }

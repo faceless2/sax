@@ -13,6 +13,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private CPReader curreader;
     private boolean standalone, entityResolver2 = true;
     private DTD dtd;
+    private Queue q;
     private ContentHandler contentHandler;
     private LexicalHandler lexicalHandler;
     private EntityResolver entityResolver;
@@ -22,7 +23,6 @@ public class BFOXMLReader implements XMLReader, Locator {
     private List<Context> stack = new ArrayList<Context>();
     private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
-    private boolean fromFatalError;
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
         if (factory == null) {
@@ -144,33 +144,33 @@ public class BFOXMLReader implements XMLReader, Locator {
                 in = in2;
             }
         }
-        curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
-        final EntityResolver oldres = entityResolver;
+        EntityResolver entityResolver = this.entityResolver;
         if (!entityResolver2 && entityResolver instanceof EntityResolver2) {
             entityResolver = new EntityResolver() {
                 public InputSource resolveEntity(String pubid, String sysid) throws SAXException, IOException {
-                    return oldres.resolveEntity(pubid, sysid);
+                    return BFOXMLReader.this.entityResolver.resolveEntity(pubid, sysid);
                 }
             };
         }
+        q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
+
+        curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
         try {
-            if (contentHandler != null) {
-                contentHandler.setDocumentLocator(this);
-                contentHandler.startDocument();
+            if (q.isContentHandler()) {
+                q.setDocumentLocator(this);
+                q.startDocument();
             }
             curreader = CPReader.normalize(CPReader.getReader(in), false);
             readDocument(curreader);
-            if (contentHandler != null) {
-                contentHandler.endDocument();
+            if (q.isContentHandler()) {
+                q.endDocument();
             }
-        } catch (SAXException e) {
-            if (!fromFatalError) {
-                fatalError(curreader, e.getMessage(), e);
-            } else {
-                throw e;
-            }
+        } catch (SAXParseException e) {
+            q.fatalError(e);
+            throw e;
         } finally {
-            entityResolver = oldres;
+            q.close();
+            q = null;
         }
     }
 
@@ -254,20 +254,8 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     // PEReference [Parameter entity references] are recognized anywhere in the DTD (internal and external subsets and external parameter entities), except in literals [EntityValue, AttValue, SystemLiteral, PubidLiteral], processing instructions, comments, and the contents of ignored conditional sections (see 3.4 Conditional Sections). They are also recognized in entity value literals [EntityValue]. The use of parameter entities in the internal subset is restricted as described below.
 
-    private String fatalError(final CPReader reader, String msg) throws SAXException, IOException {
-        return fatalError(reader, msg, null);
-    }
-
-    private String fatalError(final CPReader reader, String msg, Throwable t) throws SAXException, IOException {
-        SAXParseException e = new SAXParseException(msg, reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
-        if (t != null) {
-            e.initCause(t);
-        }
-        fromFatalError = true;
-        if (errorHandler != null) {
-            errorHandler.fatalError(e);
-        }
-        throw e;
+    private String error(final CPReader reader, String msg) throws SAXException, IOException {
+        throw new SAXParseException(msg, reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
     }
 
     static String hex(int c) {
@@ -297,7 +285,7 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     private void readS(final CPReader reader) throws SAXException, IOException {
         if (c != 32 && c != 10 && c != 13 && c != 9) {
-            fatalError(reader, "Expected whitespace, got " + hex(c));
+            error(reader, "Expected whitespace, got " + hex(c));
         }
         do {
             c = reader.read();
@@ -320,7 +308,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             len = start;
             return s;
         } else {
-            return fatalError(reader, "Invalid Name " + hex(c));
+            return error(reader, "Invalid Name " + hex(c));
         }
     }
 
@@ -337,7 +325,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             len = start;
             return s;
         } else {
-            return fatalError(reader, "Invalid Nmtoken " + hex(c));
+            return error(reader, "Invalid Nmtoken " + hex(c));
         }
     }
 
@@ -369,7 +357,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 c = reader.read();
                 return sb.toString();
             } else {
-                return fatalError(reader, "Invalid NotationType token " + hex(c));
+                return error(reader, "Invalid NotationType token " + hex(c));
             }
         } else {
             String s = readName(reader);
@@ -403,10 +391,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                         c = reader.read();
                         return sb.toString();
                     } else {
-                        return fatalError(reader, "Invalid NotationType token " + hex(c));
+                        return error(reader, "Invalid NotationType token " + hex(c));
                     }
                 } else {
-                    return fatalError(reader, "Invalid NotationType token " + hex(c));
+                    return error(reader, "Invalid NotationType token " + hex(c));
                 }
             } else {
                 return s;
@@ -447,7 +435,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
             if (c != ')') {
-                fatalError(reader, "Invalid ContentSpec " + hex(c));
+                error(reader, "Invalid ContentSpec " + hex(c));
             }
             sb.append(')');
             c = reader.read();
@@ -496,7 +484,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         }
                     }
                     if (c != ')') {
-                        return fatalError(reader, "Invalid ContentSpec " + fmt(sb.toString()) +" "+hex(c));
+                        return error(reader, "Invalid ContentSpec " + fmt(sb.toString()) +" "+hex(c));
                     }
                     sb.append(')');
                     if (bar) {
@@ -504,7 +492,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         // If not, asterisk is optional.
                         c = reader.read();
                         if (c != '*') {
-                            return fatalError(reader, "Invalid ContentSpec " + fmt(sb.toString()) +" "+hex(c));
+                            return error(reader, "Invalid ContentSpec " + fmt(sb.toString()) +" "+hex(c));
                         }
                         sb.append('*');
                         c = reader.read();
@@ -525,7 +513,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (s.equals("EMPTY") || s.equals("ANY")) {
                 return s;
             } else {
-                return fatalError(reader, "Invalid ContentSpec " + hex(c));
+                return error(reader, "Invalid ContentSpec " + hex(c));
             }
         }
     }
@@ -540,7 +528,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (c >= 0) {
                     append(c);
                 } else {
-                    return fatalError(reader, "EOF reading SystemLiteral");
+                    return error(reader, "EOF reading SystemLiteral");
                 }
             }
             c = reader.read();
@@ -548,7 +536,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             len = start;
             return s;
         } else {
-            return fatalError(reader, "Invalid SystemLiteral " + hex(c));
+            return error(reader, "Invalid SystemLiteral " + hex(c));
         }
     }
 
@@ -569,9 +557,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                         append(' ');
                     }
                 } else if (c < 0) {
-                    return fatalError(reader, "EOF reading Pubiditeral");
+                    return error(reader, "EOF reading Pubiditeral");
                 } else {
-                    return fatalError(reader, "Invalid PubidLiteral " + hex(c));
+                    return error(reader, "Invalid PubidLiteral " + hex(c));
                 }
             }
             c = reader.read();
@@ -583,7 +571,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             len = start;
             return s;
         } else {
-            return fatalError(reader, "Invalid PubidLiteral " + hex(quote));
+            return error(reader, "Invalid PubidLiteral " + hex(quote));
         }
     }
 
@@ -607,7 +595,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 } else if (c >= 'a' && c <= 'f') {
                     v = c - 'a' + 10;
                 } else {
-                    fatalError(reader, "Invalid Reference " + hex(c));
+                    error(reader, "Invalid Reference " + hex(c));
                     return null;
                 }
                 for (int i=0;;i++) {
@@ -621,11 +609,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else if (c >= 'a' && c <= 'f') {
                         v = (v<<4) + c - 'a' + 10;
                     } else {
-                        fatalError(reader, "Invalid Reference " + hex(c));
+                        error(reader, "Invalid Reference " + hex(c));
                         return null;
                     }
                     if (v > 0x10FFFF) {
-                        fatalError(reader, "Invalid Reference " + hex(c));
+                        error(reader, "Invalid Reference " + hex(c));
                     }
                 }
             } else if (c >= '0' && c <= '9') {
@@ -637,29 +625,29 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else if (c >= '0' && c <= '9') {
                         v = (v*10) + c - '0';
                     } else {
-                        fatalError(reader, "Invalid Reference " + hex(c));
+                        error(reader, "Invalid Reference " + hex(c));
                         return null;
                     }
                     if (v > 0x10FFFF) {
-                        fatalError(reader, "Invalid Reference " + hex(c));
+                        error(reader, "Invalid Reference " + hex(c));
                     }
                 }
             } else {
-                fatalError(reader, "Invalid Reference " + hex(c));
+                error(reader, "Invalid Reference " + hex(c));
                 return null;
             }
             if (v < 20) {
                 if (reader.isXML11()) {
                     if (v == 0) {
-                        fatalError(reader, "Invalid char " + hex(v));
+                        error(reader, "Invalid char " + hex(v));
                         return null;
                     }
                 } else if (v != 9 && v != 10 && v != 13) {
-                    fatalError(reader, "Invalid char " + hex(v));
+                    error(reader, "Invalid char " + hex(v));
                     return null;
                 }
             } else if (v >= 0xd800 && (v <= 0xdfff || v == 0xfffe || v == 0xffff || v > 0x10ffff)) { 
-                fatalError(reader, "Invalid Reference " + hex(v));
+                error(reader, "Invalid Reference " + hex(v));
                 return null;
             }
             entity = new Entity(null, Character.toString(v));       // takes codepoint from Java11
@@ -672,7 +660,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 c = reader.read();
             }
             if (c != ';') {
-                fatalError(reader, "Invalid EntityReference " + hex(c));
+                error(reader, "Invalid EntityReference " + hex(c));
                 return null;
             }
             String name = newString(start);
@@ -695,7 +683,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
         } else {
-            fatalError(reader, "Invalid Reference " + hex(c));
+            error(reader, "Invalid Reference " + hex(c));
         }
         return entity;
     }
@@ -715,19 +703,19 @@ public class BFOXMLReader implements XMLReader, Locator {
                 c = reader.read();
             }
             if (c != ';') {
-                fatalError(reader, "Invalid PEReference " + hex(c));
+                error(reader, "Invalid PEReference " + hex(c));
                 return null;
             }
             String name = newString(start);
             len = start;
             Entity entity = dtd == null ? null : dtd.getEntity("%" + name);
             if (entity == null) {
-                fatalError(reader, "Undefined parameter entity %" + name + ";");
+                error(reader, "Undefined parameter entity %" + name + ";");
                 return null;
             }
             return entity;
         } else {
-            fatalError(reader, "Invalid PEReference " + hex(c));
+            error(reader, "Invalid PEReference " + hex(c));
             return null;
         }
     }
@@ -745,18 +733,18 @@ public class BFOXMLReader implements XMLReader, Locator {
                     Entity entity = readPEReference(reader);
                     CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
                     if (entityReader == null) {
-                        fatalError(reader, "Unresolved parameter entity %" + entity.getName() + ";");
+                        error(reader, "Unresolved parameter entity %" + entity.getName() + ";");
                     }
                     int c;
-                    if (lexicalHandler != null) {
-                        lexicalHandler.startEntity("%" + entity.getName());
+                    if (q.isLexicalHandler()) {
+                        q.startEntity("%" + entity.getName());
                     }
                     while ((c=entityReader.read()) >= 0) {
                         append(c);
                     }
                     entityReader.close();
-                    if (lexicalHandler != null) {
-                        lexicalHandler.endEntity("%" + entity.getName());
+                    if (q.isLexicalHandler()) {
+                        q.endEntity("%" + entity.getName());
                     }
                 } else if (c == '&') {
                     Entity entity = readReference(reader);
@@ -768,7 +756,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         append(';');
                     }
                 } else if (c < 0) {
-                    return fatalError(reader, "EOF reading EntityValue");
+                    return error(reader, "EOF reading EntityValue");
                 } else {
                     append(c);
                 }
@@ -777,7 +765,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             len = start;
             return s;
         } else {
-            return fatalError(reader, "Invalid EntityValue " + hex(quote));
+            return error(reader, "Invalid EntityValue " + hex(quote));
         }
     }
 
@@ -798,10 +786,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                         append(entity.getName());
                         append(';');
                     } else if (entity.isExternal()) {
-                        fatalError(reader, "Invalid external reference &" + entity.getName() + "; in AttValue");
+                        error(reader, "Invalid external reference &" + entity.getName() + "; in AttValue");
                     } else if (entity.isMarkup()) {
                         if (entityStack.contains(entity)) {
-                            fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                            error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
                             entityStack.add(entity);
                             CPReader entityReader = entity.getReader(null, null, reader.isXML11());
@@ -813,9 +801,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                         append(entity.getValue());
                     }
                 } else if (c == '<') {
-                    fatalError(reader, "Invalid AttributeValue " + hex(quote));
+                    error(reader, "Invalid AttributeValue " + hex(quote));
                 } else if (c < 0) {
-                    fatalError(reader, "EOF reading AttributeValue");
+                    error(reader, "EOF reading AttributeValue");
                 } else if (isS(c)) {
                     append(' ');
                 } else {
@@ -830,7 +818,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 return null;
             }
         } else {
-            return fatalError(reader, "Invalid AttributeValue " + hex(quote));
+            return error(reader, "Invalid AttributeValue " + hex(quote));
         }
     }
 
@@ -847,13 +835,13 @@ public class BFOXMLReader implements XMLReader, Locator {
                     if (c == '-') {
                         c = reader.read();
                         if (c == '>') {
-                            if (lexicalHandler != null) {
-                                lexicalHandler.comment(buf, start, len - start);
+                            if (q.isLexicalHandler()) {
+                                q.comment(buf, start, len - start);
                             }
                             len = start;
                             return;
                         } else {
-                            fatalError(reader, "\"--\" not allowed in comment");
+                            error(reader, "\"--\" not allowed in comment");
                         }
                     } else {
                         append('-');
@@ -863,9 +851,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     append(c);
                 }
             }
-            fatalError(reader, "EOF in comment");
+            error(reader, "EOF in comment");
         } else {
-            fatalError(reader, "Invalid token \"<!-\"");
+            error(reader, "Invalid token \"<!-\" " + hex(c) );
         }
     }
 
@@ -874,10 +862,10 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private void readCDATA(final CPReader reader) throws SAXException, IOException {
         if (c != '[') {
-            fatalError(reader, "Bad token <![CDATA " + hex(c));
+            error(reader, "Bad token <![CDATA " + hex(c));
         }
-        if (lexicalHandler != null) {
-            lexicalHandler.startCDATA();
+        if (q.isLexicalHandler()) {
+            q.startCDATA();
         }
         int start = len;
         int d = 0;
@@ -890,9 +878,9 @@ public class BFOXMLReader implements XMLReader, Locator {
             } else if (c == ']' && d == 2) {
                 append(']');
             } else if (c == '>' && d == 2) {
-                contentHandler.characters(buf, start, len - start);
-                if (lexicalHandler != null) {
-                    lexicalHandler.endCDATA();
+                q.characters(buf, start, len - start);
+                if (q.isLexicalHandler()) {
+                    q.endCDATA();
                 }
                 len = start;
                 return;
@@ -910,7 +898,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             }
             c = reader.read();
         }
-        fatalError(reader, "EOF in CDATA");
+        error(reader, "EOF in CDATA");
     }
 
     /**
@@ -922,7 +910,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             readS(reader);
         }
         if (c != '[') {
-            fatalError(reader, "Bad token <![INCLUDE " + hex(c));
+            error(reader, "Bad token <![INCLUDE " + hex(c));
         }
         int start = len;
         final int line = reader.getLineNumber();
@@ -947,7 +935,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 append(c);
             }
         }
-        fatalError(reader, "EOF in INCLUDE");
+        error(reader, "EOF in INCLUDE");
         return null;
     }
 
@@ -956,7 +944,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             readS(reader);
         }
         if (c != '[') {
-            fatalError(reader, "Bad token <![IGNORE " + hex(c));
+            error(reader, "Bad token <![IGNORE " + hex(c));
         }
         int depth = 1;
         while ((c=reader.read()) >= 0) {
@@ -977,7 +965,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
         }
-        fatalError(reader, "EOF in IGNORE");
+        error(reader, "EOF in IGNORE");
     }
 
     /**
@@ -995,7 +983,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (c == 'S') {
             String s = readName(reader);
             if (!s.equals("SYSTEM")) {
-                fatalError(reader, "Invalid DOCTYPE " + fmt(name));
+                error(reader, "Invalid DOCTYPE " + fmt(name));
             }
             readS(reader);
             sysid = readSystemLiteral(reader, c);
@@ -1005,7 +993,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         } else if (c == 'P') {
             String s = readName(reader);
             if (!s.equals("PUBLIC")) {
-                fatalError(reader, "Invalid DOCTYPE " + fmt(name));
+                error(reader, "Invalid DOCTYPE " + fmt(name));
             }
             readS(reader);
             pubid = readPubidLiteral(reader, c);
@@ -1033,15 +1021,16 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (c == '-') {
                             sb.append('-');
                             LexicalHandler lh = lexicalHandler;
-                            lexicalHandler = new DefaultHandler2() {
+                            Queue q = this.q;
+                            this.q = new DirectQueue(q.contentHandler, q.declHandler, q.dtdHandler, q.entityResolver,q.errorHandler, new DefaultHandler2() {
                                 public void comment(char[] buf, int off, int len) {
                                     sb.append('-');
                                     sb.append(buf, off, len);
                                     sb.append("--");
                                 }
-                            };
+                            });
                             readComment(reader);
-                            lexicalHandler = lh;
+                            this.q = q;
                         }
                     }
                 }
@@ -1060,7 +1049,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 c = reader.read();
             }
             if (c != ']') {
-                fatalError(reader, "Bad token " + hex(c));
+                error(reader, "Bad token " + hex(c));
             }
             internalSubset = CPReader.getReader(sb.toString(), reader.getPublicId(), reader.getSystemId(), line, col, reader.isXML11());
             c = reader.read();
@@ -1069,7 +1058,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             }
         }
         if (c != '>') {
-            fatalError(reader, "Bad token " + hex(c));
+            error(reader, "Bad token " + hex(c));
         }
         dtd = new DTD(factory, pubid, reader.getSystemId(), sysid);
         Entity dtdentity = new Entity(factory, null, name, null, pubid, sysid, -1, -1);
@@ -1078,8 +1067,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             // First, to match Xerces
             dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
         }
-        if (lexicalHandler != null) {
-            lexicalHandler.startDTD(name, pubid, sysid);
+        if (q.isLexicalHandler()) {
+            q.startDTD(name, pubid, sysid);
         }
         if (internalSubset != null) {
             CPReader tmp = curreader;
@@ -1092,20 +1081,20 @@ public class BFOXMLReader implements XMLReader, Locator {
             dtdreader = dtdentity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
         }
         if (dtdreader != null) {
-            if (lexicalHandler != null) {
-                lexicalHandler.startEntity("[dtd]");
+            if (q.isLexicalHandler()) {
+                q.startEntity("[dtd]");
             }
             CPReader tmp = curreader;
             curreader = dtdreader;
             readExternalSubset(dtdreader, true);
             curreader = tmp;
             dtdreader.close();
-            if (lexicalHandler != null) {
-                lexicalHandler.endEntity("[dtd]");
+            if (q.isLexicalHandler()) {
+                q.endEntity("[dtd]");
             }
         }
-        if (lexicalHandler != null) {
-            lexicalHandler.endDTD();
+        if (q.isLexicalHandler()) {
+            q.endDTD();
         }
     }
 
@@ -1133,27 +1122,27 @@ public class BFOXMLReader implements XMLReader, Locator {
                         } else if (s.equals("NOTATION")) {
                             readNOTATION(reader);
                         } else {
-                            fatalError(reader, "Bad token \"" + s + "\"");
+                            error(reader, "Bad token \"" + s + "\"");
                         }
                     }
                 } else if (c == '?') {
                     c = reader.read();
                     String target = readName(reader);
                     if (target.equalsIgnoreCase("xml")) {
-                        fatalError(reader, "Bad processing instruction target \"<?xml\"");
+                        error(reader, "Bad processing instruction target \"<?xml\"");
                     } else {
                         readPI(reader, target, true);
                     }
                 } else {
-                    fatalError(reader, "Bad token < " + hex(c));
+                    error(reader, "Bad token < " + hex(c));
                 }
             } else if (c == '%') {
                 Entity entity = readPEReference(reader);
-                if (lexicalHandler != null) {
-                    lexicalHandler.startEntity("%" + entity.getName());
+                if (q.isLexicalHandler()) {
+                    q.startEntity("%" + entity.getName());
                 }
                 if (entityStack.contains(entity)) {
-                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                    error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
                     entityStack.add(entity);
                     CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
@@ -1165,11 +1154,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                     entityReader.close();
                     entityStack.remove(entityStack.size() - 1);
                 }
-                if (lexicalHandler != null) {
-                    lexicalHandler.endEntity("%" + entity.getName());
+                if (q.isLexicalHandler()) {
+                    q.endEntity("%" + entity.getName());
                 }
             } else if (!isS(c)) {
-                fatalError(reader, "Invalid internal subset token " + hex(c));
+                error(reader, "Invalid internal subset token " + hex(c));
             }
             c = reader.read();
         }
@@ -1200,7 +1189,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         } else if ("IGNORE".equals(s)) {
                             readIGNORE(reader);
                         } else {
-                            fatalError(reader, "Bad token \"<![" + s + "\"");
+                            error(reader, "Bad token \"<![" + s + "\"");
                         }
                     } else {
                         String s = readName(reader);
@@ -1213,7 +1202,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         } else if (s.equals("NOTATION")) {
                             readNOTATION(reader);
                         } else {
-                            fatalError(reader, "Bad token \"<!" + s + "\"");
+                            error(reader, "Bad token \"<!" + s + "\"");
                         }
                     }
                 } else if (c == '?') {
@@ -1224,21 +1213,21 @@ public class BFOXMLReader implements XMLReader, Locator {
                             readXMLPI(reader, false);
                             allowProlog = false;
                         } else {
-                            fatalError(reader, "Bad processing instruction target \"<?xml\"");
+                            error(reader, "Bad processing instruction target \"<?xml\"");
                         }
                     } else {
                         readPI(reader, target, true);
                     }
                 } else {
-                    fatalError(reader, "Bad token < " + hex(c));
+                    error(reader, "Bad token < " + hex(c));
                 }
             } else if (c == '%') {
                 Entity entity = readPEReference(reader);
-                if (lexicalHandler != null) {
-                    lexicalHandler.startEntity("%" + entity.getName());
+                if (q.isLexicalHandler()) {
+                    q.startEntity("%" + entity.getName());
                 }
                 if (entityStack.contains(entity)) {
-                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                    error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
                     entityStack.add(entity);
                     CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
@@ -1246,11 +1235,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                     entityReader.close();
                     entityStack.remove(entityStack.size() - 1);
                 }
-                if (lexicalHandler != null) {
-                    lexicalHandler.endEntity("%" + entity.getName());
+                if (q.isLexicalHandler()) {
+                    q.endEntity("%" + entity.getName());
                 }
             } else if (!isS(c)) {
-                fatalError(reader, "Invalid internal subset token " + hex(c));
+                error(reader, "Invalid internal subset token " + hex(c));
             }
             c = reader.read();
         }
@@ -1271,7 +1260,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         } else {
             name = readName(reader);
             if (name.indexOf(":") >= 0) {
-//                fatalError(reader, "Entity name " + fmt(name) + " cannot contain colon when parsing with namespaces");
+//                error(reader, "Entity name " + fmt(name) + " cannot contain colon when parsing with namespaces");
             }
             readS(reader);
         }
@@ -1279,8 +1268,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             int line = reader.getLineNumber();
             int col = reader.getColumnNumber();
             String value = readEntityValue(reader, c);
-            if (declHandler != null) {
-                declHandler.internalEntityDecl(name, value);
+            if (q.isDeclHandler()) {
+                q.internalEntityDecl(name, value);
             }
             dtd.addEntity(new Entity(factory, dtd, name, value, reader.getPublicId(), reader.getSystemId(), line, col));
             c = reader.read();
@@ -1288,7 +1277,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
             }
             if (c != '>') {
-                fatalError(reader, "Bad token " + hex(c));
+                error(reader, "Bad token " + hex(c));
             }
         } else {
             // Read ExternalID
@@ -1303,7 +1292,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
                 sysid = readSystemLiteral(reader, c);
             } else {
-                fatalError(reader, "Bad token \"" + name + "\"");
+                error(reader, "Bad token \"" + name + "\"");
             }
             if (isS(c)) {
                 readS(reader);
@@ -1317,20 +1306,20 @@ public class BFOXMLReader implements XMLReader, Locator {
                         readS(reader);
                     }
                 } else {
-                    fatalError(reader, "Bad token \"" + s + "\"");
+                    error(reader, "Bad token \"" + s + "\"");
                 }
             }
             if (c != '>') {
-                fatalError(reader, "Bad token " + hex(c));
+                error(reader, "Bad token " + hex(c));
             }
             if (ndata != null) {
-                if (dtdHandler != null) {
-                    dtdHandler.unparsedEntityDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid), ndata);
+                if (q.isDTDHandler()) {
+                    q.unparsedEntityDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid), ndata);
                 }
             } else {
                 String r = factory.resolve(reader.getSystemId(), sysid);
-                if (declHandler != null) {
-                    declHandler.externalEntityDecl(name, pubid, r);
+                if (q.isDeclHandler()) {
+                    q.externalEntityDecl(name, pubid, r);
                 }
                 Entity entity = new Entity(factory, dtd, name, null, pubid, sysid, -1, -1);
                 dtd.addEntity(entity);
@@ -1370,7 +1359,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 } else if (attMode.equals("#IMPLIED") || attMode.equals("#REQUIRED")) {
                     defaultValue = null;
                 } else {
-                    fatalError(reader, "Bad token " + attMode);
+                    error(reader, "Bad token " + attMode);
                 }
             } else {
                 attMode = "#FIXED";
@@ -1410,10 +1399,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
                 elt.attributeDecl(attName, attType, attMode, defaultValue);
             } catch (IllegalStateException e) {
-                fatalError(reader, e.getMessage());
+                error(reader, e.getMessage());
             }
-            if (declHandler != null) {
-                declHandler.attributeDecl(name, attName, attType, attMode, defaultValue);
+            if (q.isDeclHandler()) {
+                q.attributeDecl(name, attName, attType, attMode, defaultValue);
             }
         }
     }
@@ -1439,13 +1428,13 @@ public class BFOXMLReader implements XMLReader, Locator {
                     elt.setModel(contentSpec);
                 }
             } catch (RuntimeException e) {
-                fatalError(reader, e.getMessage());
+                error(reader, e.getMessage());
             }
-            if (declHandler != null) {
-                declHandler.elementDecl(name, contentSpec);
+            if (q.isDeclHandler()) {
+                q.elementDecl(name, contentSpec);
             }
         } else {
-            fatalError(reader, "EOF in ElementDecl: " + hex(c));
+            error(reader, "EOF in ElementDecl: " + hex(c));
         }
     }
 
@@ -1472,13 +1461,13 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
             }
         } else {
-            fatalError(reader, "Bad NotationDecl \"" + s + "\"");
+            error(reader, "Bad NotationDecl \"" + s + "\"");
         }
         if (c != '>') {
-            fatalError(reader, "Bad NotationDecl " + hex(c));
+            error(reader, "Bad NotationDecl " + hex(c));
         }
-        if (dtdHandler != null) {
-            dtdHandler.notationDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid));
+        if (q.isDTDHandler()) {
+            q.notationDecl(name, pubid, factory.resolve(reader.getSystemId(), sysid));
         }
     }
 
@@ -1501,7 +1490,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
             }
             if (c != '=') {
-                fatalError(reader, "invalid prolog");
+                error(reader, "invalid prolog");
             }
             c = reader.read();
             if (isS(c)) {
@@ -1521,7 +1510,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
             }
             if (c != '=') {
-                fatalError(reader, "invalid prolog");
+                error(reader, "invalid prolog");
             }
             c = reader.read();
             if (isS(c)) {
@@ -1541,7 +1530,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 readS(reader);
             }
             if (c != '=') {
-                fatalError(reader, "invalid prolog");
+                error(reader, "invalid prolog");
             }
             c = reader.read();
             if (isS(c)) {
@@ -1555,13 +1544,13 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         if (document) {
             if (version == null) {
-                fatalError(reader, "invalid prolog, no version");
+                error(reader, "invalid prolog, no version");
             } else if ("1.0".equals(version)) {
                 reader.setXML11(false);
             } else if ("1.1".equals(version)) {
                 reader.setXML11(true);
             } else {
-                fatalError(reader, "invalid prolog version \"" + version + "\"");
+                error(reader, "invalid prolog version \"" + version + "\"");
             }
             if (standalone == null) {
                 this.standalone = false;
@@ -1570,28 +1559,28 @@ public class BFOXMLReader implements XMLReader, Locator {
             } else if (standalone.equals("no")) {
                 this.standalone = false;
             } else {
-                fatalError(reader, "invalid prolog standalone \"" + standalone + "\"");
+                error(reader, "invalid prolog standalone \"" + standalone + "\"");
             }
         } else {
             if (encoding == null) {
-                fatalError(reader, "invalid entity prolog, no encoding");
+                error(reader, "invalid entity prolog, no encoding");
             }
             if (standalone != null) {
-                fatalError(reader, "invalid entity prolog, found standalone \"" + standalone + "\"");
+                error(reader, "invalid entity prolog, found standalone \"" + standalone + "\"");
             }
         }
         if (c != '?') {
-            fatalError(reader, "invalid prolog");
+            error(reader, "invalid prolog");
         }
         c = reader.read();
         if (c != '>') {
-            fatalError(reader, "invalid prolog");
+            error(reader, "invalid prolog");
         }
     }
 
     private void readPI(final CPReader reader, final String target, final boolean indoctype) throws IOException, SAXException {
         if (target.indexOf(":") >= 0) {
-//            fatalError(reader, "PI target " + fmt(target) + " cannot contain colon when parsing with namespaces");
+//            error(reader, "PI target " + fmt(target) + " cannot contain colon when parsing with namespaces");
         }
         if (isS(c)) {
             readS(reader);
@@ -1601,8 +1590,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (c == '?') {
                     if ((c=reader.read()) == '>') {
                         // PI in DTD seems ignored? eg xmlconf/ibm/xml-1.1/valid/P02/ibm02v01.xml
-                        if (contentHandler != null && !indoctype) {
-                            contentHandler.processingInstruction(target, newString(start));
+                        if (q.isContentHandler() && !indoctype) {
+                            q.processingInstruction(target, newString(start));
                         }
                         done = true;
                     } else {
@@ -1617,15 +1606,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
             if (!done) {
-                fatalError(reader, "EOF in ProcessingInstruction");
+                error(reader, "EOF in ProcessingInstruction");
             }
             len = start;
         } else if (c == '?' && reader.read() == '>') {
-            if (contentHandler != null && !indoctype) {
-                contentHandler.processingInstruction(target, "");
+            if (q.isContentHandler() && !indoctype) {
+                q.processingInstruction(target, "");
             }
         } else {
-            fatalError(reader, "Bad token " + hex(c));
+            error(reader, "Bad token " + hex(c));
         }
     }
 
@@ -1637,11 +1626,11 @@ public class BFOXMLReader implements XMLReader, Locator {
             readS(reader);
         }
         if (stack.isEmpty()) {
-            fatalError(reader, "Unexpected end element tag \"</" + qName + ">\"");
+            error(reader, "Unexpected end element tag \"</" + qName + ">\"");
         }
         Context ctx = stack.remove(stack.size() - 1);
         if (!qName.equals(ctx.name)) {
-            fatalError(reader, "The element type \"" + ctx.name + "\" must be terminated by the matching end-tag \"</" + qName + ">\"");
+            error(reader, "The element type \"" + ctx.name + "\" must be terminated by the matching end-tag \"</" + qName + ">\"");
         }
         if (c == '>') {
             int ix = qName.indexOf(':');
@@ -1650,22 +1639,22 @@ public class BFOXMLReader implements XMLReader, Locator {
                 String prefix = qName.substring(0, ix);
                 String localName = qName.substring(ix + 1);
                 uri = ctx.namespace(prefix);
-                if (contentHandler != null) {
-                    contentHandler.endElement(uri, localName, qName);
+                if (q.isContentHandler()) {
+                    q.endElement(uri, localName, qName);
                 }
             } else {
                 uri = ctx.namespace("");
-                if (contentHandler != null) {
-                    contentHandler.endElement(uri, qName, qName);
+                if (q.isContentHandler()) {
+                    q.endElement(uri, qName, qName);
                 }
             }
-            if (contentHandler != null && ctx.prefixes != null) {
+            if (q.isContentHandler() && ctx.prefixes != null) {
                 for (String s : ctx.prefixes) {
-                    contentHandler.endPrefixMapping(s);
+                    q.endPrefixMapping(s);
                 }
             }
         } else {
-            fatalError(reader, "Bad endElement " + hex(c));
+            error(reader, "Bad endElement " + hex(c));
         }
     }
 
@@ -1692,13 +1681,13 @@ public class BFOXMLReader implements XMLReader, Locator {
                     }
                     for (int i=0;i<tmpatts.size();i+=2) {
                         if (tmpatts.get(i).equals(attName)) {
-                            fatalError(reader, "Redefined attribute " + attName);
+                            error(reader, "Redefined attribute " + attName);
                         }
                     }
                     tmpatts.add(attName);
                     tmpatts.add(attValue);
                 } else {
-                    fatalError(reader, "Error parsing attribute value for \"" + attName + "\"");
+                    error(reader, "Error parsing attribute value for \"" + attName + "\"");
                 }
                 c = reader.read();
                 if (isS(c)) {
@@ -1719,13 +1708,12 @@ public class BFOXMLReader implements XMLReader, Locator {
                 defaultAtts = new HashMap<String,Attribute>(defaultAtts);
             }
             if (tmpatts != null) {
-                System.out.flush();
                 for (int i=0;i<tmpatts.size();i+=2) {
                     String attQName = tmpatts.get(i);
                     if (attQName.equals("xmlns")) {
                         String attValue = tmpatts.get(i + 1);
-                        if (contentHandler != null) {
-                            contentHandler.startPrefixMapping("", attValue);
+                        if (q.isContentHandler()) {
+                            q.startPrefixMapping("", attValue);
                             if (ctx.prefixes == null) {
                                 ctx.prefixes = new ArrayList<String>();
                             }
@@ -1736,11 +1724,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else if (attQName.startsWith("xmlns:")) {
                         String prefix = attQName.substring(6);
                         if (prefix.equals("xmlns") || prefix.equals("xml")) {
-                            fatalError(reader, "Can't redefine " + fmt(prefix) + " prefix");
+                            error(reader, "Can't redefine " + fmt(prefix) + " prefix");
                         }
                         String attValue = tmpatts.get(i + 1);
-                        if (contentHandler != null) {
-                            contentHandler.startPrefixMapping(prefix, attValue);
+                        if (q.isContentHandler()) {
+                            q.startPrefixMapping(prefix, attValue);
                             if (ctx.prefixes == null) {
                                 ctx.prefixes = new ArrayList<String>();
                             }
@@ -1762,7 +1750,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         String attValue = tmpatts.get(i++);
                         int ix = attQName.indexOf(":");
                         if (ix == 0 && factory.xercescompat && reader.isXML11()) {
-                            fatalError(reader, "Attribute " + fmt(attQName) + " has zero-length prefix");
+                            error(reader, "Attribute " + fmt(attQName) + " has zero-length prefix");
                         }
                         // "If the attribute type is not CDATA, then the XML processor must further process
                         //  the normalized attribute value by discarding any leading and trailing space
@@ -1796,14 +1784,14 @@ public class BFOXMLReader implements XMLReader, Locator {
                             String prefix = attQName.substring(0, ix);
                             String localName = attQName.substring(ix + 1);
                             if (localName.indexOf(':') >= 0) {
-                                fatalError(reader, "Attribute " + fmt(attQName) + " not a valid QName");
+                                error(reader, "Attribute " + fmt(attQName) + " not a valid QName");
                             }
                             if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
-                                fatalError(reader, "Attribute " + fmt(attQName) + " has zero-length localName");
+                                error(reader, "Attribute " + fmt(attQName) + " has zero-length localName");
                             }
                             String uri = ctx.namespace(prefix);
                             if (uri == null) {
-                                fatalError(reader, "The prefix " + fmt(prefix) + " for attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
+                                error(reader, "The prefix " + fmt(prefix) + " for attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
                             }
                             atts.add(uri, localName, attQName, "CDATA", attValue);
                         } else {
@@ -1827,7 +1815,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         String localName = attQName.substring(ix + 1);
                         String uri = ctx.namespace(prefix);
                         if (uri == null) {
-                            fatalError(reader, "The prefix " + fmt(prefix) + " for default attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
+                            error(reader, "The prefix " + fmt(prefix) + " for default attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
                         }
                         atts.add(uri, localName, attQName, "CDATA", attValue);
                     } else {
@@ -1837,44 +1825,44 @@ public class BFOXMLReader implements XMLReader, Locator {
             }
             int ix = qName.indexOf(':');
             if (ix == 0 && factory.xercescompat && reader.isXML11()) {
-                fatalError(reader, "Element " + fmt(qName) + " has zero-length prefix");
+                error(reader, "Element " + fmt(qName) + " has zero-length prefix");
             }
             String uri;
             if (ix > 0) {
                 String prefix = qName.substring(0, ix);
                 String localName = qName.substring(ix + 1);
                 if (localName.indexOf(':') >= 0) {
-                    fatalError(reader, "Element " + fmt(qName) + " not a valid QName");
+                    error(reader, "Element " + fmt(qName) + " not a valid QName");
                 }
                 if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
-                    fatalError(reader, "Element " + fmt(qName) + " has zero-length localName");
+                    error(reader, "Element " + fmt(qName) + " has zero-length localName");
                 }
                 uri = ctx.namespace(prefix);
                 if (uri == null) {
-                    fatalError(reader, "The prefix " + fmt(prefix) + " for element " + fmt(qName) + " is not bound.");
+                    error(reader, "The prefix " + fmt(prefix) + " for element " + fmt(qName) + " is not bound.");
                 }
-                if (contentHandler != null) {
-                    contentHandler.startElement(uri, localName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
+                if (q.isContentHandler()) {
+                    q.startElement(uri, localName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
                     if (selfClosing) {
-                        contentHandler.endElement(uri, localName, qName);
+                        q.endElement(uri, localName, qName);
                     } else {
                         stack.add(ctx);
                     }
                 }
             } else {
                 uri = ctx.namespace("");
-                if (contentHandler != null) {
-                    contentHandler.startElement(uri, qName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
+                if (q.isContentHandler()) {
+                    q.startElement(uri, qName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
                     if (selfClosing) {
-                        contentHandler.endElement(uri, qName, qName);
+                        q.endElement(uri, qName, qName);
                     } else {
                         stack.add(ctx);
                     }
                 }
             }
-            if (selfClosing && contentHandler != null && ctx.prefixes != null) {
+            if (selfClosing && q.isContentHandler() && ctx.prefixes != null) {
                 for (String s : ctx.prefixes) {
-                    contentHandler.endPrefixMapping(s);
+                    q.endPrefixMapping(s);
                 }
             }
         }
@@ -1918,14 +1906,14 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (s.equals("DOCTYPE")) {
                             readDOCTYPE(reader);
                         } else {
-                            fatalError(reader, "Bad token \"" + s + "\"");
+                            error(reader, "Bad token \"" + s + "\"");
                         }
                     }
                 } else if (c == '?') {
                     c = reader.read();
                     String target = readName(reader);
                     if (target.equalsIgnoreCase("xml")) {
-                        fatalError(reader, "Bad processing instruction target \"<?xml\"");
+                        error(reader, "Bad processing instruction target \"<?xml\"");
                     } else {
                         readPI(reader, target, false);
                     }
@@ -1934,9 +1922,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     break;
                 }
             } else if (c < 0) {
-                fatalError(reader, "EOF after prolog");
+                error(reader, "EOF after prolog");
             } else if (!isS(c)) {
-                fatalError(reader, "Invalid prolog " + hex(c));
+                error(reader, "Invalid prolog " + hex(c));
             }
             c = reader.read();
             skip = false;
@@ -1951,7 +1939,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             readContent(reader, false);
             if (!stack.isEmpty()) {
                 String name = stack.get(stack.size() - 1).name;
-                fatalError(reader, "The element type \"" + name + "\" must be terminated by the matching end-tag \"</" + name + ">\"");
+                error(reader, "The element type \"" + name + "\" must be terminated by the matching end-tag \"</" + name + ">\"");
             }
         }
 
@@ -1966,22 +1954,22 @@ public class BFOXMLReader implements XMLReader, Locator {
                     c = reader.read();
                     String target = readName(reader);
                     if (target.equalsIgnoreCase("xml")) {
-                        fatalError(reader, "Bad processing instruction target \"<?xml\"");
+                        error(reader, "Bad processing instruction target \"<?xml\"");
                     } else {
                         readPI(reader, target, false);
                     }
                 } else {
-                    fatalError(reader, "Bad token < " + hex(c));
+                    error(reader, "Bad token < " + hex(c));
                 }
             } else if (!isS(c)) {
-                fatalError(reader, "Bad token " + hex(c));
+                error(reader, "Bad token " + hex(c));
             }
             c = reader.read();
         }
     }
 
     private void flush() throws IOException, SAXException {
-        if (contentHandler != null) {
+        if (q.isContentHandler()) {
             boolean ignoreWhitespace = false;
             if (dtd != null) {
                 Context ctx = stack.get(stack.size() - 1);
@@ -2000,9 +1988,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
             if (ignoreWhitespace) {
-                contentHandler.ignorableWhitespace(buf, 0, len);
+                q.ignorableWhitespace(buf, 0, len);
             } else {
-                contentHandler.characters(buf, 0, len);
+                q.characters(buf, 0, len);
             }
         }
         len = 0;
@@ -2034,10 +2022,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if ("CDATA".equals(name)) {
                             readCDATA(reader);
                         } else {
-                            fatalError(reader, "Bad token \"<![" + name + "\"");
+                            error(reader, "Bad token \"<![" + name + "\"");
                         }
                     } else {
-                        fatalError(reader, "Bad token \"<! " + hex(c));
+                        error(reader, "Bad token \"<! " + hex(c));
                     }
                 } else if (c == '?') {
                     c = reader.read();
@@ -2047,7 +2035,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             readXMLPI(reader, false);
                             allowProlog = false;
                         } else {
-                            fatalError(reader, "Bad processing instruction target \"<?xml\"");
+                            error(reader, "Bad processing instruction target \"<?xml\"");
                         }
                     } else {
                         readPI(reader, target, false);
@@ -2074,14 +2062,14 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (entity.isCharacter()) {
                     append(entity.getValue());
                 } else if (entity.isInvalid()) {
-                    fatalError(reader, "Unresolved entity &" + entity.getName() + ";");
+                    error(reader, "Unresolved entity &" + entity.getName() + ";");
                 } else {
-                    if (lexicalHandler != null) {
-                        lexicalHandler.startEntity(entity.getName());
+                    if (q.isLexicalHandler()) {
+                        q.startEntity(entity.getName());
                     }
                     if (entity.isMarkup()) {
                         if (entityStack.contains(entity)) {
-                            fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                            error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
                             entityStack.add(entity);
                             CPReader entityReader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
@@ -2092,8 +2080,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else {
                         append(entity.getValue());
                     }
-                    if (lexicalHandler != null) {
-                        lexicalHandler.endEntity(entity.getName());
+                    if (q.isLexicalHandler()) {
+                        q.endEntity(entity.getName());
                     }
                 }
                 bba = 0;
@@ -2109,7 +2097,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     }
                 } else if (c == '>') {
                     if (bba == 2) {
-                        fatalError(reader, "The character sequence ]]> must not appear unescaped in character data");
+                        error(reader, "The character sequence ]]> must not appear unescaped in character data");
                         bba = 2;
                     } else {
                         bba = 0;
@@ -2185,7 +2173,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     readerStack = new ArrayList<CPReader>();
                 }
                 if (entityStack.contains(entity)) {
-                    fatalError(reader, "Self-referencing entity &" + entity.getName() + ";");
+                    error(reader, "Self-referencing entity &" + entity.getName() + ";");
                 } else {
                     reader = entity.getReader(entityResolver, reader.getSystemId(), reader.isXML11());
                     entityStack.add(entity);
