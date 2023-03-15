@@ -40,6 +40,8 @@ abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, Erro
     final boolean isEntityResolver2() {
        return entityResolver instanceof EntityResolver2;
     }
-
-    abstract void close();
+    /**
+     * Is is safe to reuse buffers?
+     */
+    abstract boolean isBufSafe();
 }

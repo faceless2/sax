@@ -392,8 +392,8 @@ public class Test {
             msg("processingInstruction(" + fmt(target)+", "+fmt(data)+")");
         }
         public void setDocumentLocator(Locator locator) {
-            flush();
             try {
+                flush();
                 msg("setDocumentLocator(" + fmt(locator) + ")");
             } catch (SAXException e) {
                 throw new RuntimeException(e);

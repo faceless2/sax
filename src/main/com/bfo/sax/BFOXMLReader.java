@@ -2,6 +2,7 @@ package com.bfo.sax;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.net.URL;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
@@ -11,9 +12,10 @@ public class BFOXMLReader implements XMLReader, Locator {
     private int c, len;
     private char[] buf = new char[256];
     private CPReader curreader;
-    private boolean standalone, entityResolver2 = true;
-    private DTD dtd;
+    private int inputBufferSize;
+    private boolean standalone, entityResolver2 = true, multiThreaded = false;
     private Queue q;
+    private DTD dtd;
     private ContentHandler contentHandler;
     private LexicalHandler lexicalHandler;
     private EntityResolver entityResolver;
@@ -23,6 +25,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private List<Context> stack = new ArrayList<Context>();
     private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
+    private ThreadPoolExecutor threadPool = null;
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
         if (factory == null) {
@@ -50,6 +53,8 @@ public class BFOXMLReader implements XMLReader, Locator {
            return false;
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
            return entityResolver2;
+       } else if ("http://bfo.com/sax/features/threads".equals(name)) {
+           return multiThreaded;
        } else {
            return false;
        }
@@ -61,6 +66,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             return declHandler;
         } else if ("http://xml.org/sax/properties/document-xml-version".equals(name)) {
             return curreader != null && curreader.isXML11();
+        } else if ("http://apache.org/xml/properties/input-buffer-size".equals(name)) {
+            return inputBufferSize;
         }
         throw new SAXNotRecognizedException(name);
     }
@@ -90,6 +97,8 @@ public class BFOXMLReader implements XMLReader, Locator {
            }
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
            entityResolver2 = value;
+       } else if ("http://bfo.com/sax/features/threads".equals(name)) {
+           multiThreaded = value;
        } else {
            throw new SAXNotRecognizedException(name);
        }
@@ -105,6 +114,13 @@ public class BFOXMLReader implements XMLReader, Locator {
             declHandler = (DeclHandler)value;
             if (value instanceof DeclHandler || value == null) {
                 declHandler = (DeclHandler)value;
+            } else {
+               throw new SAXNotSupportedException(name + " wrong class");
+            }
+        } else if ("http://apache.org/xml/properties/input-buffer-size".equals(name)) {
+            if (value instanceof Integer) {
+                int v = ((Integer)value).intValue();
+                inputBufferSize = v <= 0 ? 0 : Math.max(16, v);
             } else {
                throw new SAXNotSupportedException(name + " wrong class");
             }
@@ -152,25 +168,66 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             };
         }
-        q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
-
         curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
-        try {
-            if (q.isContentHandler()) {
-                q.setDocumentLocator(this);
-                q.startDocument();
+
+        if (multiThreaded) {
+            q = new ThreadedQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
+            final InputSource fin = in;
+            Runnable r = new Runnable() {
+                public void run() {
+                    try {
+                        try {
+                            if (q.isContentHandler()) {
+                                q.setDocumentLocator(BFOXMLReader.this);
+                                q.startDocument();
+                            }
+                            curreader = CPReader.normalize(CPReader.getReader(fin), false);
+                            readDocument(curreader);
+                            if (q.isContentHandler()) {
+                                q.endDocument();
+                            }
+                        } catch (SAXParseException e) {
+                            q.fatalError(e);
+                        }
+                    } catch (Exception e) {
+                        ((ThreadedQueue)q).close(e);
+                    } finally {
+                        ((ThreadedQueue)q).close(null);
+                    }
+                }
+            };
+            if (threadPool == null) {
+                new Thread(r).start();
+                ((ThreadedQueue)q).run();
+            } else {
+                try {
+                    threadPool.submit(r).get();
+                } catch (ExecutionException e) {
+                    throw new RuntimeException(e);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
             }
-            curreader = CPReader.normalize(CPReader.getReader(in), false);
-            readDocument(curreader);
-            if (q.isContentHandler()) {
-                q.endDocument();
+        } else {
+            q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
+
+            curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
+            try {
+                if (q.isContentHandler()) {
+                    q.setDocumentLocator(this);
+                    q.startDocument();
+                }
+                curreader = CPReader.normalize(CPReader.getReader(in), false);
+                readDocument(curreader);
+                if (q.isContentHandler()) {
+                    q.endDocument();
+                }
+            } catch (SAXParseException e) {
+                q.fatalError(e);
+                throw e;
+            } finally {
+                q = null;
             }
-        } catch (SAXParseException e) {
-            q.fatalError(e);
-            throw e;
-        } finally {
-            q.close();
-            q = null;
         }
     }
 
@@ -296,7 +353,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      * Read a name. Cursor is after first char of name. On exit cursor is after last char in name, ie on space etc
      */
     private String readName(final CPReader reader) throws SAXException, IOException {
-        int start = len;
+        final int start = len;
         if (isNameStartChar(c)) {
             append(c);
             c = reader.read();
@@ -313,7 +370,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
 
     private String readNmtoken(final CPReader reader) throws SAXException, IOException {
-        int start = len;
+        final int start = len;
         if (isNameChar(c)) {
             append(c);
             c = reader.read();
@@ -523,7 +580,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private String readSystemLiteral(final CPReader reader, int quote) throws SAXException, IOException {
         if (quote == '\'' || quote == '"') {
-            int start = len;
+            final int start = len;
             while ((c = reader.read()) != quote) {
                 if (c >= 0) {
                     append(c);
@@ -545,7 +602,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private String readPubidLiteral(final CPReader reader, int quote) throws SAXException, IOException {
         if (quote == '\'' || quote == '"') {
-            int start = len;
+            final int start = len;
             while ((c = reader.read()) != quote) {
                 if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || "-'()+,./:=?;!*#@$_%".indexOf(c) >= 0) {
                     append(c);
@@ -652,7 +709,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             }
             entity = new Entity(null, Character.toString(v));       // takes codepoint from Java11
         } else if (isNameStartChar(c)) {
-            int start = len;
+            final int start = len;
             append(c);
             c = reader.read();
             while (c != ';' && isNameChar(c)) {
@@ -695,7 +752,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private Entity readPEReference(final CPReader reader) throws SAXException, IOException {
         c = reader.read();
         if (isNameStartChar(c)) {
-            int start = len;
+            final int start = len;
             append(c);
             c = reader.read();
             while (c != ';' && isNameChar(c)) {
@@ -725,7 +782,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private String readEntityValue(final CPReader reader, final int quote) throws SAXException, IOException {
         if (quote == '\'' || quote == '"') {
-            int start = len;
+            final int start = len;
             // Expand parameters here (done in read) but not genreal entities
             // r- https://www.w3.org/TR/REC-xml/#intern-replacement
             while ((c = reader.read()) != quote) {
@@ -776,7 +833,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private String readAttValue(final CPReader reader, final int quote) throws SAXException, IOException {
         if (quote == '\'' || quote == '"' || quote == -1) {
-            int start = len;
+            final int start = len;
             while ((c = reader.read()) != quote) {
                 if (c == '&') {
                     Entity entity = readReference(reader);
@@ -828,7 +885,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private void readComment(final CPReader reader) throws SAXException, IOException {
         c = reader.read();
         if (c == '-') {
-            int start = len;
+            final int start = len;
             while ((c=reader.read()) >= 0) {
                 if (c == '-') {
                     c = reader.read();
@@ -837,8 +894,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (c == '>') {
                             if (q.isLexicalHandler()) {
                                 q.comment(buf, start, len - start);
+                                len = postBuffer(start);
+                            } else {
+                                len = start;
                             }
-                            len = start;
                             return;
                         } else {
                             error(reader, "\"--\" not allowed in comment");
@@ -867,7 +926,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (q.isLexicalHandler()) {
             q.startCDATA();
         }
-        int start = len;
+        final int start = len;
         int d = 0;
         c = reader.read();
         while (c >= 0) {
@@ -878,11 +937,10 @@ public class BFOXMLReader implements XMLReader, Locator {
             } else if (c == ']' && d == 2) {
                 append(']');
             } else if (c == '>' && d == 2) {
-                q.characters(buf, start, len - start);
+                flush(start, false);
                 if (q.isLexicalHandler()) {
                     q.endCDATA();
                 }
-                len = start;
                 return;
             } else if (d == 2) {
                 append(']');
@@ -912,7 +970,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (c != '[') {
             error(reader, "Bad token <![INCLUDE " + hex(c));
         }
-        int start = len;
+        final int start = len;
         final int line = reader.getLineNumber();
         final int col = reader.getColumnNumber();
         while ((c=reader.read()) >= 0) {
@@ -1009,6 +1067,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             final int col = reader.getColumnNumber();
             StringBuilder sb = new StringBuilder();
             int quote = 0;
+            final int start = len;
             while (c >= 0 && (c != ']' || quote != 0)) {
                 // We have to identity comments, because otherwise
                 // quotes in comments break the "in quote" test
@@ -1022,7 +1081,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             sb.append('-');
                             LexicalHandler lh = lexicalHandler;
                             Queue q = this.q;
-                            this.q = new DirectQueue(q.contentHandler, q.declHandler, q.dtdHandler, q.entityResolver,q.errorHandler, new DefaultHandler2() {
+                            this.q = new DirectQueue(null, null, null, q.entityResolver, q.errorHandler, new DefaultHandler2() {
                                 public void comment(char[] buf, int off, int len) {
                                     sb.append('-');
                                     sb.append(buf, off, len);
@@ -1048,6 +1107,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
                 c = reader.read();
             }
+            len = start;
             if (c != ']') {
                 error(reader, "Bad token " + hex(c));
             }
@@ -1584,7 +1644,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         if (isS(c)) {
             readS(reader);
-            int start = len;
+            final int start = len;
             boolean done = false;
             while (!done && c >= 0) {
                 if (c == '?') {
@@ -1968,32 +2028,52 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
     }
 
-    private void flush() throws IOException, SAXException {
+    private int flush(int start, boolean ignore) throws IOException, SAXException {
         if (q.isContentHandler()) {
             boolean ignoreWhitespace = false;
-            if (dtd != null) {
-                Context ctx = stack.get(stack.size() - 1);
-                String name = ctx.name;
-                Element elt = ctx.element;
-                if (elt != null) {
-                    ignoreWhitespace = !elt.hasText();
+            if (ignore) {
+                if (dtd != null) {
+                    Context ctx = stack.get(stack.size() - 1);
+                    String name = ctx.name;
+                    Element elt = ctx.element;
+                    if (elt != null) {
+                        ignoreWhitespace = !elt.hasText();
+                    }
                 }
-            }
-            if (ignoreWhitespace) {
-                for (int i=0;i<len;i++) {
-                    if (!isS(buf[i])) {
-                        ignoreWhitespace = false;
-                        break;
+                if (ignoreWhitespace) {
+                    for (int i=start;i<len;i++) {
+                        if (!isS(buf[i])) {
+                            ignoreWhitespace = false;
+                            break;
+                        }
                     }
                 }
             }
             if (ignoreWhitespace) {
-                q.ignorableWhitespace(buf, 0, len);
+                q.ignorableWhitespace(buf, start, len - start);
+                len = postBuffer(start);
             } else {
-                q.characters(buf, 0, len);
+                q.characters(buf, start, len - start);
+                len = postBuffer(start);
             }
+        } else {
+            len = start;
         }
-        len = 0;
+        return len;
+    }
+
+    private int postBuffer(int start) {
+        if (!q.isBufSafe()) {
+            int max = inputBufferSize == 0 ? 65536 : inputBufferSize * 4;
+            if (len > max) {
+                buf = new char[buf.length];
+                return 0;
+            } else {
+                return len;
+            }
+        } else {
+            return start;
+        }
     }
 
     /**
@@ -2005,11 +2085,12 @@ public class BFOXMLReader implements XMLReader, Locator {
             allowProlog = false;
         }
         int bba = 0;
+        int start = len;
         while (c > 0) {
             if (c == '<') {
                 bba = 0;
                 if (len > 0) {
-                    flush();
+                    start = flush(start, true);
                 }
                 c = reader.read();
                 if (c == '!') {
@@ -2027,6 +2108,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else {
                         error(reader, "Bad token \"<! " + hex(c));
                     }
+                    start = len;
                 } else if (c == '?') {
                     c = reader.read();
                     String target = readName(reader);
@@ -2040,17 +2122,20 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else {
                         readPI(reader, target, false);
                     }
+                    start = len;
                 } else if (c == '/') {
                     readETag(reader);
                     if (stack.isEmpty()) {
                         break;
                     }
+                    start = len;
                 } else {
                     readSTag(reader);
+                    start = len;
                 }
             } else if (c == '&') {
                 if (len > 0) {
-                    flush();
+                    start = flush(start, true);
                 }
                 // API says
                 // "When a SAX2 driver is providing these events, all other events
@@ -2077,6 +2162,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             entityReader.close();
                             entityStack.remove(entityStack.size() - 1);
                         }
+                        start = len;
                     } else {
                         append(entity.getValue());
                     }
@@ -2105,11 +2191,14 @@ public class BFOXMLReader implements XMLReader, Locator {
                 } else {
                     bba = 0;
                 }
+                if (inputBufferSize > 0 && buf.length > inputBufferSize) {
+                    start = flush(start, true);
+                }
             }
             c = reader.read();
         }
-        if (len > 0) {
-            flush();
+        if (len > start) {
+            start = flush(start, true);
         }
     }
 
