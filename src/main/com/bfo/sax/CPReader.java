@@ -116,18 +116,20 @@ abstract class CPReader {
                     } else {
                         throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                     }
-                } else if (v >= 0x7f && v <= 0x9f) {
-                    if (xml11 && v == 0x85) {
+                } else if (xml11 && v >= 0x7f && v <= 0x9f) {
+                    if (v == 0x85) {
                         line++;
                         column = 1;
                         out = '\n';
                     } else {
-                        throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                        throw new SAXParseException("Invalid XML 1.1 character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                     }
                 } else if (xml11 && v == 0x2028) {
                     line++;
                     column = 1;
                     out = '\n';
+                } else if (v >= 0xd800 && v <= 0xdfff || v == 0xfffe || v == 0xffff) {
+                    throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                 } else {
                     column++;
                     out = v;
@@ -341,10 +343,12 @@ abstract class CPReader {
                 }
                 if (s.startsWith("encoding=")) {
                     s = s.substring(9);
-                    c = s.charAt(0);
-                    int i;
-                    if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
-                        xmlenc = s.substring(1, i).toLowerCase();
+                    if (s.length() > 0) {
+                        c = s.charAt(0);
+                        int i;
+                        if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
+                            xmlenc = s.substring(1, i).toLowerCase();
+                        }
                     }
                 }
             }

@@ -1270,6 +1270,9 @@ public class BFOXMLReader implements XMLReader, Locator {
             readS(reader);
         } else {
             name = readName(reader);
+            if (name.indexOf(":") >= 0) {
+//                fatalError(reader, "Entity name " + fmt(name) + " cannot contain colon when parsing with namespaces");
+            }
             readS(reader);
         }
         if (c == '"' || c == '\'') {
@@ -1587,6 +1590,9 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
 
     private void readPI(final CPReader reader, final String target, final boolean indoctype) throws IOException, SAXException {
+        if (target.indexOf(":") >= 0) {
+//            fatalError(reader, "PI target " + fmt(target) + " cannot contain colon when parsing with namespaces");
+        }
         if (isS(c)) {
             readS(reader);
             int start = len;
