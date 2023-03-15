@@ -116,7 +116,15 @@ abstract class CPReader {
                     } else {
                         throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                     }
-                } else if (xml11 && (v == 0x85 || v == 0x2028)) {
+                } else if (v >= 0x7f && v <= 0x9f) {
+                    if (xml11 && v == 0x85) {
+                        line++;
+                        column = 1;
+                        out = '\n';
+                    } else {
+                        throw new SAXParseException("Invalid character &#x" + Integer.toHexString(v) + ";", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                    }
+                } else if (xml11 && v == 0x2028) {
                     line++;
                     column = 1;
                     out = '\n';

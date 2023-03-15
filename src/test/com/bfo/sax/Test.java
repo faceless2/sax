@@ -167,7 +167,7 @@ public class Test {
                     }
                 } else {
                     if (newFail && oldFail) {
-                        msg = "BAD (both failed differently, failure expected)";
+                        msg = "SO-SO (both failed differently, failure expected)";
                     } else if (newFail) {
                         msg = "GOOD (BFO failed, system succeded, failure expected)";
                         diff = false;
