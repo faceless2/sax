@@ -1771,7 +1771,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         //
                         // on balance, most attributes will be CDATA, so check that first.
 
-                        Attribute a = element.getAttributes().get(attQName);
+                        Attribute a = element != null ? element.getAttributes().get(attQName) : null;
                         if (a != null && !"CDATA".equals(a.getType())) {
                             StringBuilder sb = new StringBuilder();
                             boolean ws = false;
@@ -2016,8 +2016,10 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (c != '<') {
             allowProlog = false;
         }
+        int bba = 0;
         while (c > 0) {
             if (c == '<') {
+                bba = 0;
                 if (len > 0) {
                     flush();
                 }
@@ -2094,8 +2096,27 @@ public class BFOXMLReader implements XMLReader, Locator {
                         lexicalHandler.endEntity(entity.getName());
                     }
                 }
+                bba = 0;
             } else {
                 append(c);
+                if (c == ']') {
+                    if (bba == 0) {
+                        bba = 1;
+                    } else if (bba == 1) {
+                        bba = 2;
+                    } else {
+                        // keep at 2
+                    }
+                } else if (c == '>') {
+                    if (bba == 2) {
+                        fatalError(reader, "The character sequence ]]> must not appear unescaped in character data");
+                        bba = 2;
+                    } else {
+                        bba = 0;
+                    }
+                } else {
+                    bba = 0;
+                }
             }
             c = reader.read();
         }
