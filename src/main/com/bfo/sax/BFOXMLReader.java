@@ -150,6 +150,9 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
 
     @Override public void parse(InputSource in) throws IOException, SAXException {
+        if (q != null) {
+            throw new IllegalStateException("Already parsed");
+        }
         if (in.getSystemId() != null) {
             String systemId = factory.resolve("", in.getSystemId());
             if (!systemId.equals(in.getSystemId())) {
@@ -173,32 +176,32 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (multiThreaded) {
             q = new ThreadedQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
             final InputSource fin = in;
+            final ThreadedQueue tq = (ThreadedQueue)q;
             Runnable r = new Runnable() {
                 public void run() {
                     try {
                         try {
-                            if (q.isContentHandler()) {
-                                q.setDocumentLocator(BFOXMLReader.this);
-                                q.startDocument();
+                            if (tq.isContentHandler()) {
+                                tq.setDocumentLocator(BFOXMLReader.this);
+                                tq.startDocument();
                             }
                             curreader = CPReader.normalize(CPReader.getReader(fin), false);
                             readDocument(curreader);
-                            if (q.isContentHandler()) {
-                                q.endDocument();
+                            if (tq.isContentHandler()) {
+                                tq.endDocument();
                             }
                         } catch (SAXParseException e) {
-                            q.fatalError(e);
+                            tq.fatalError(e);
                         }
                     } catch (Exception e) {
-                        ((ThreadedQueue)q).close(e);
+                        tq.close(e);
                     } finally {
-                        ((ThreadedQueue)q).close(null);
+                        tq.close(null);
                     }
                 }
             };
             if (threadPool == null) {
                 new Thread(r).start();
-                ((ThreadedQueue)q).run();
             } else {
                 try {
                     threadPool.submit(r).get();
@@ -208,6 +211,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     throw new RuntimeException(e);
                 }
             }
+            tq.run();
         } else {
             q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
 
@@ -226,7 +230,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                 q.fatalError(e);
                 throw e;
             } finally {
-                q = null;
             }
         }
     }
