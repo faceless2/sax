@@ -3,7 +3,9 @@ package com.bfo.sax;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 import java.io.IOException;
-import java.util.concurrent.locks.*;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.atomic.AtomicReference;
 
 class ThreadedQueue extends Queue {
     private String publicId, systemId;
@@ -11,6 +13,7 @@ class ThreadedQueue extends Queue {
     private final Rec[] q;
     private final ReentrantLock lock;
     private final Condition notEmpty, maybeEmpty;
+    private final AtomicReference<Object> reply;
     private int takeIndex, putIndex, count;
     private Locator locator;
 
@@ -23,6 +26,7 @@ class ThreadedQueue extends Queue {
         lock = new ReentrantLock(false);
         notEmpty = lock.newCondition();
         maybeEmpty =  lock.newCondition();
+        reply = new AtomicReference<Object>();
     }
 
     @Override public boolean isBufSafe() {
@@ -39,6 +43,11 @@ class ThreadedQueue extends Queue {
     }
     @Override public int getColumnNumber() {
         return column;
+    }
+    private void testFail() {
+        if (reply.get() instanceof Exception ) {
+            throw (IllegalStateException)new IllegalStateException("other thread failed").initCause((Exception)reply.get());
+        }
     }
     @Override public void attributeDecl(String a1, String a2, String a3, String a4, String a5) throws SAXException {
         add(MsgType.attributeDecl, a1, a2, a3, a4, a5);
@@ -109,29 +118,25 @@ class ThreadedQueue extends Queue {
     @Override public void notationDecl(String a1, String a2, String a3) throws SAXException {
         add(MsgType.notationDecl, a1, a2, a3);
     }
-    @Override public InputSource resolveEntity(String publicId, String systemId) throws SAXException, IOException {
-        awaitEmpty();
-        return entityResolver.resolveEntity(publicId, systemId);
+    @Override public InputSource resolveEntity(String a1, String a2) throws SAXException, IOException {
+
+        return (InputSource)now(MsgType.resolveEntity, a1, a2);
     }
-    @Override public InputSource getExternalSubset(String name, String baseURI) throws SAXException, IOException {
-        awaitEmpty();
-        return ((EntityResolver2)entityResolver).getExternalSubset(name, baseURI);
+    @Override public InputSource getExternalSubset(String a1, String a2) throws SAXException, IOException {
+        return (InputSource)now(MsgType.getExternalSubset, a1, a2);
     }
-    @Override public InputSource resolveEntity(String name, String publicId, String baseURI, String systemId) throws SAXException, IOException {
-        awaitEmpty();
-        return ((EntityResolver2)entityResolver).resolveEntity(name, publicId, baseURI, systemId);
+    @Override public InputSource resolveEntity(String a1, String a2, String a3, String a4) throws SAXException, IOException {
+        return (InputSource)now(MsgType.resolveEntity2, a1, a2, a3, a4);
     }
-    @Override public void error(SAXParseException exception) throws SAXException {
-        awaitEmpty();
-        errorHandler.error(exception);
+    @Override public void error(SAXParseException a1) throws SAXException {
+        now(MsgType.error, a1);
     }
-    @Override public void warning(SAXParseException exception) throws SAXException {
-        awaitEmpty();
-        errorHandler.warning(exception);
+    @Override public void warning(SAXParseException a1) throws SAXException {
+        now(MsgType.warning, a1);
     }
-    @Override public void fatalError(SAXParseException exception) throws SAXException {
-        awaitEmpty();
-        errorHandler.fatalError(exception);
+    @Override public void fatalError(SAXParseException a1) throws SAXException {
+        now(MsgType.fatalError, a1);
+        throw a1;       // Won't get this far, because fail will be set.
     }
     @Override public void setDocumentLocator(Locator locator) {
         this.locator = locator;
@@ -139,11 +144,10 @@ class ThreadedQueue extends Queue {
         systemId = locator.getSystemId();
         line = locator.getLineNumber();
         column = locator.getColumnNumber();
-        awaitEmpty();
-        contentHandler.setDocumentLocator(this);
+        add(MsgType.setDocumentLocator, this);
     }
-    void close(Throwable e) {
-        add(MsgType.close, e);
+    void close() {
+        add(MsgType.close);
     }
 
     public String toString() {
@@ -166,7 +170,46 @@ class ThreadedQueue extends Queue {
         return sb.toString();
     }
 
+    /**
+     * Like "add" but waits for the queue to clear,
+     * add a message, then waits for and returns he response
+     */
+    private Object now(MsgType type, Object... o) {
+        testFail();
+        // Wait for queue to be empty
+        try {
+            lock.lockInterruptibly();
+            while (count != 0) {
+                maybeEmpty.await();
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } finally {
+            lock.unlock();
+        }
+        // queue is empty
+        testFail();
+        add(type, o);
+        Object out;
+        while ((out=reply.get()) == null) {
+            synchronized(reply) {
+                try {
+                    reply.wait(100);
+                } catch (InterruptedException e) { }
+            }
+        }
+        synchronized(reply) {
+            testFail();
+            reply.set(null);    // Only set in this thread to clear the response
+        }
+        return out == reply ? null : out;       // reply=reply: magic value meaning null
+    }
+
+    /**
+     * Add a message to the queue and return
+     */
     private void add(MsgType type, Object... o) {
+        testFail();
         try {
             lock.lockInterruptibly();
             if (o.length != type.c) {
@@ -175,6 +218,7 @@ class ThreadedQueue extends Queue {
             while (count == q.length) {
                 maybeEmpty.await();
             }
+            // Rec is reused; message exchange is zero allocation
             Rec r = q[putIndex];
             r.type = type;
             r.publicId = locator.getPublicId();
@@ -194,6 +238,10 @@ class ThreadedQueue extends Queue {
         }
     }
     
+    /**
+     * Wait for a message on the queue, and return it
+     * once it exists, leaving the queue state unchanged
+     */
     private MsgType peek(Object[] out) {
         try {
             lock.lockInterruptibly();
@@ -217,12 +265,17 @@ class ThreadedQueue extends Queue {
         }
     }
 
+    /**
+     * Remove the message from the queue, waiting for it
+     * if necessary.
+     */
     private void remove() {
         try {
             lock.lockInterruptibly();
             while (count == 0) {
                 notEmpty.await();
             }
+            // Rec is reused; message exchange is zero allocation
             Rec rec = q[takeIndex];
             for (int i=rec.type.c-1;i>=0;i--) {
                 rec.o[i] = null;
@@ -240,24 +293,13 @@ class ThreadedQueue extends Queue {
         }
     }
 
-    private void awaitEmpty() {
-        try {
-            lock.lockInterruptibly();
-            while (count != 0) {
-                maybeEmpty.await();
-            }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
-            lock.unlock();
-        }
-    }
-
     public void run() throws SAXException, IOException {
         Object[] o = new Object[8];
         boolean active = true;
         while (active) {
             MsgType type = peek(o);
+            boolean exchange = false;   // Set if message expects a reply
+            Object output = null;       // if exchange is true, the reply
             try {
                 switch (type) {
                     case attributeDecl: 
@@ -320,6 +362,9 @@ class ThreadedQueue extends Queue {
                     case startDocument:
                         contentHandler.startDocument();
                         break;
+                    case setDocumentLocator:
+                        contentHandler.setDocumentLocator((Locator)o[0]);
+                        break;
                     case startPrefixMapping:
                         contentHandler.startPrefixMapping((String)o[0], (String)o[1]);
                         break;
@@ -329,28 +374,64 @@ class ThreadedQueue extends Queue {
                     case unparsedEntityDecl:
                         dtdHandler.unparsedEntityDecl((String)o[0], (String)o[1], (String)o[2], (String)o[3]);
                         break;
+                    case warning:
+                        exchange = true;        // reply is null but this ensures other thread waits for any exception
+                        errorHandler.warning((SAXParseException)o[0]);
+                        break;
+                    case error:
+                        exchange = true;        // reply is null but this ensures other thread waits for any exception
+                        errorHandler.error((SAXParseException)o[0]);
+                        break;
+                    case fatalError:
+                        exchange = true;        // reply is null but this ensures other thread waits for any exception
+                        errorHandler.fatalError((SAXParseException)o[0]);
+                        throw (SAXParseException)o[0];  // fatalError must fail
+                    case getExternalSubset:
+                        exchange = true;
+                        output = ((EntityResolver2)entityResolver).getExternalSubset((String)o[0], (String)o[1]);
+                        break;
+                    case resolveEntity:
+                        exchange = true;
+                        output = entityResolver.resolveEntity((String)o[0], (String)o[1]);
+                        break;
+                    case resolveEntity2:
+                        exchange = true;
+                        output = ((EntityResolver2)entityResolver).resolveEntity((String)o[0], (String)o[1], (String)o[2], (String)o[3]);
+                        break;
                     case close:
-                        Throwable e = (Throwable)o[0];
-                        if (e instanceof RuntimeException) {
-                            throw (RuntimeException)e;
-                        } else if (e instanceof SAXException) {
-                            throw (SAXException)e;
-                        } else if (e instanceof IOException) {
-                            throw (IOException)e;
-                        } else if (e instanceof Error) {
-                            throw (Error)e;
-                        } else if (e != null) { // Shouldn't happen
-                            throw new SAXException((Exception)e);
-                        } else {
-                            active = false;
-                        }
+                        active = false;         // heard after endDocument on clean exit
                         break;
                     default:
                         throw new IllegalStateException("Unhandled type " + type);
                 }
+                if (exchange) {
+                    synchronized(reply) {
+                        reply.set(output == null ? reply : output); // reply=reply: magic value meaning null
+                        reply.notify();
+                    }
+                }
+            } catch (Throwable e) {
+                synchronized(reply) {
+                    reply.set(e);
+                    reply.notify();
+                }
+                if (e instanceof RuntimeException) {
+                    throw (RuntimeException)e;
+                } else if (e instanceof SAXException) {
+                    throw (SAXException)e;
+                } else if (e instanceof IOException) {
+                    throw (IOException)e;
+                } else if (e instanceof Error) {
+                    throw (Error)e;
+                } else if (e != null) {
+                    throw (SAXException)new SAXException().initCause(e);
+                }
             } finally {
                 remove();
             }
+        }
+        synchronized(reply) {   // Last ditch
+            reply.notify();
         }
     }
 
@@ -359,7 +440,10 @@ class ThreadedQueue extends Queue {
         externalEntityDecl(3), internalEntityDecl(2), startCDATA(0), startDTD(3), startEntity(1),
         characters(3), endDocument(0), endElement(3), ignorableWhitespace(3), notationDecl(3),
         processingInstruction(2), skippedEntity(1), startDocument(0), startElement(4), startPrefixMapping(2), unparsedEntityDecl(4),
-        close(1);
+        error(1), warning(1), fatalError(1),
+        resolveEntity(2), resolveEntity2(4), getExternalSubset(2),
+        setDocumentLocator(1),
+        close(0);
         final int c;
         MsgType(int c) {
             this.c = c;

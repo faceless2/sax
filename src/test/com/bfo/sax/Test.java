@@ -520,7 +520,7 @@ public class Test {
 
     public static void main(String[] argsa) throws Exception {
         newfactory = new BFOSAXParserFactory();
-        oldfactory = javax.xml.parsers.SAXParserFactory.newInstance();
+        oldfactory = SAXParserFactory.newDefaultInstance();
         newfactory.setNamespaceAware(true);
         oldfactory.setNamespaceAware(true);
 

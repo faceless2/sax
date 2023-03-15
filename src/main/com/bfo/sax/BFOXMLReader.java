@@ -10,10 +10,10 @@ import org.xml.sax.ext.*;
 public class BFOXMLReader implements XMLReader, Locator {
 
     private int c, len;
-    private char[] buf = new char[256];
+    private char[] buf = new char[2048];
     private CPReader curreader;
     private int inputBufferSize;
-    private boolean standalone, entityResolver2 = true, multiThreaded = false;
+    private boolean standalone, entityResolver2 = true, multiThreaded = true;
     private Queue q;
     private DTD dtd;
     private ContentHandler contentHandler;
@@ -190,13 +190,21 @@ public class BFOXMLReader implements XMLReader, Locator {
                             if (tq.isContentHandler()) {
                                 tq.endDocument();
                             }
+                            tq.close();
                         } catch (SAXParseException e) {
+                            // This will push a fatalError to the q and wait;
+                            // the main app thread will pop this message, call
+                            // fatalError, then throw this exception again.
+                            // That will be caught on the main thread, passed back
+                            // to this thread where it will trigger an "echo"
+                            // exception of some sort on this thread again to
+                            // halt.
                             tq.fatalError(e);
+                        } catch (Exception e) {
+                            tq.fatalError(new SAXParseException("Uncaught Exception", BFOXMLReader.this, e));
                         }
                     } catch (Exception e) {
-                        tq.close(e);
-                    } finally {
-                        tq.close(null);
+                        // All this does is capture the "echo" exception
                     }
                 }
             };
