@@ -257,113 +257,142 @@ public class Test {
     }
 
     private class MyHandler extends DefaultHandler2 {
-        private StringBuilder chars = new StringBuilder(), ignorable = new StringBuilder();
+        private StringBuilder chars = new StringBuilder(), ignorable = new StringBuilder(), comment = new StringBuilder();
         private final Callback callback;
         private final long start = System.currentTimeMillis();
         private int count = 0;
         MyHandler(Callback callback) {
             this.callback = callback;
         }
-        private void flush() throws SAXException {
-            String c = chars.toString();
-            String i = ignorable.toString();
-            chars.setLength(0);
-            ignorable.setLength(0);
-            if (c.length() > 0) {
-                msg("characters(" + fmt(c) + ")");
-            }
-            if (i.length() > 0) {
-                msg("ignorableWhitespace(" + fmt(i) + ")");
+        private void flushChars() throws SAXException {
+            if (chars.length() > 0) {
+                msg("characters(" + fmt(chars.toString()) + ")");
+                chars.setLength(0);
             }
         }
-        private void msg(String s) throws SAXException {
-            if (chars.length() > 0 || ignorable.length() > 0) {
-                flush();
+        private void flushComment() throws SAXException {
+            if (comment.length() > 0) {
+                msg("comment(" + fmt(comment.toString()) + ")");
+                comment.setLength(0);
             }
+        }
+        private void flushIgnorable() throws SAXException {
+            if (ignorable.length() > 0) {
+                msg("ignorable(" + fmt(ignorable.toString()) + ")");
+                ignorable.setLength(0);
+            }
+        }
+        private void flush() throws SAXException {
+            flushChars();
+            flushComment();
+            flushIgnorable();
+        }
+        private void msg(String s) throws SAXException {
             callback.msg(s, this);
             if (progress && (++count % 1000000) == 0) {
                 System.out.println(count + " records at " + (System.currentTimeMillis() - start) + "ms");
             }
         }
         public void attributeDecl(String eName, String aName, String type, String mode, String value) throws SAXException {
+            flush();
             msg("attributeDecl(" + fmt(eName)+", "+fmt(aName)+", "+fmt(type)+", "+fmt(mode)+", "+fmt(value) + ")");
         }
         public void comment(char[] ch, int start, int length) throws SAXException {
-            msg("comment(" + fmt(new String(ch, start, length)) + ")");
+            flushChars();
+            flushIgnorable();
+            comment.append(ch, start, length);
         }
         public void elementDecl(String name, String model) throws SAXException {
+            flush();
             msg("elementDecl(" + fmt(name)+", "+fmt(model)+")");
         }
         public void endCDATA() throws SAXException {
+            flush();
             msg("endCDATA");
         }
         public void endDTD() throws SAXException {
+            flush();
             msg("endDTD");
         }
         public void endEntity(String name) throws SAXException {
+            flush();
             msg("endEntity(" + fmt(name) + ")");
         }
         public void externalEntityDecl(String name, String publicId, String systemId) throws SAXException {
+            flush();
             msg("externalEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public InputSource getExternalSubset(String name, String baseURI) throws SAXException {
+            flush();
             msg("getExternalSubset(" + fmt(name)+", "+fmt(fixPath(baseURI))+")");
             return null;
         }
         public void internalEntityDecl(String name, String value) throws SAXException {
+            flush();
             msg("internalEntityDecl(" + fmt(name)+", "+fmt(value)+")");
         }
         public InputSource resolveEntity(String publicId, String systemId) throws SAXException {
+            flush();
             msg("resolveEntity(" + fmt(publicId)+", "+fmt(fixPath(systemId))+")");
             return null;
         }
         public InputSource resolveEntity(String name, String publicId, String baseURI, String systemId) throws SAXException {
+            flush();
             msg("resolveEntity(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(baseURI))+", "+fmt(fixPath(systemId))+")");
             return null;
         }
         public void startCDATA() throws SAXException {
+            flush();
             msg("startCDATA");
         }
         public void startDTD(String name, String publicId, String systemId) throws SAXException {
+            flush();
             msg("startDTD(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public void startEntity(String name) throws SAXException {
+            flush();
             msg("startEntity(" + fmt(name)+")");
         }
         public void characters(char[] ch, int start, int length) throws SAXException {
-            if (ignorable.length() > 0) {
-                flush();
-            }
+            flushComment();
+            flushIgnorable();
             chars.append(ch, start, length);
         }
         public void endDocument() throws SAXException {
+            flush();
             msg("endDocument");
         }
         public void endElement(String uri, String localName, String qName) throws SAXException {
+            flush();
             msg("endElement(" + fmt(uri)+", "+fmt(localName)+", "+fmt(qName)+")");
         }
         public void endPrefixMapping(String prefix) throws SAXException {
+            flush();
             msg("endPrefixMapping(" + fmt(prefix)+")");
         }
         public void error(SAXParseException e) throws SAXException {
+            flush();
             msg("error: " + e);
         }
         public void fatalError(SAXParseException e) throws SAXException {
+            flush();
             msg("fatalError: " + e);
         }
         public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
-            if (chars.length() > 0) {
-                flush();
-            }
+            flushChars();
+            flushComment();
             ignorable.append(ch, start, length);
         }
         public void notationDecl(String name, String publicId, String systemId) throws SAXException {
+            flush();
             msg("notationDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+")");
         }
         public void processingInstruction(String target, String data) throws SAXException {
+            flush();
             msg("processingInstruction(" + fmt(target)+", "+fmt(data)+")");
         }
         public void setDocumentLocator(Locator locator) {
+            flush();
             try {
                 msg("setDocumentLocator(" + fmt(locator) + ")");
             } catch (SAXException e) {
@@ -371,21 +400,27 @@ public class Test {
             }
         }
         public void skippedEntity(String name) throws SAXException {
+            flush();
             msg("skippedEntity(" + fmt(name) + ")");
         }
         public void startDocument() throws SAXException {
+            flush();
             msg("startDocument()");
         }
         public void startElement(String uri, String localName, String qName, Attributes attributes) throws SAXException {
+            flush();
             msg("startElement(" + fmt(uri)+", "+fmt(localName)+", "+fmt(qName)+", "+fmt(attributes)+")");
         }
         public void startPrefixMapping(String prefix, String uri) throws SAXException {
+            flush();
             msg("startPrefixMapping(" + fmt(prefix)+", "+fmt(uri) + ")");
         }
         public void unparsedEntityDecl(String name, String publicId, String systemId, String notationName) throws SAXException {
+            flush();
             msg("unparsedEntityDecl(" + fmt(name)+", "+fmt(publicId)+", "+fmt(fixPath(systemId))+", "+fmt(notationName)+")");
         }
         public void warning(SAXParseException e) throws SAXException {
+            flush();
             msg("warning: " + e);
         }
     };
