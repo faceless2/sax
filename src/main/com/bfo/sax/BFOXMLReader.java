@@ -918,7 +918,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                                 error(reader, "Self-referencing entity &" + entity.getName() + ";");
                             } else {
                                 entityStack.add(entity);
-                                CPReader entityReader = entity.getReader(null, this, reader);
+                                CPReader entityReader = getEntityReader(reader, entity);
                                 readAttValue(entityReader, -1); // recursive!
                                 entityReader.close();
                                 entityStack.remove(entityStack.size() - 1);
@@ -1227,11 +1227,11 @@ public class BFOXMLReader implements XMLReader, Locator {
             error(reader, "Bad token " + hex(c));
         }
         dtd = new DTD(factory, pubid, reader.getSystemId(), sysid);
-        Entity dtdentity = Entity.createDTD(factory, name, pubid, sysid);
+        Entity dtdentity = Entity.createDTD(name, pubid, sysid);
         CPReader dtdreader = null;
         if (pubid == null && sysid == null) {
             // First, to match Xerces
-            dtdreader = dtdentity.getReader(q, this, reader);
+            dtdreader = getEntityReader(reader, dtdentity);
         }
         if (q.isLexicalHandler()) {
             q.startDTD(name, pubid, sysid);
@@ -1245,7 +1245,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             internalSubset.close();
         }
         if (pubid != null || sysid != null) {
-            dtdreader = dtdentity.getReader(q, this, reader);
+            dtdreader = getEntityReader(reader, dtdentity);
         }
         if (dtdreader != null) {
             if (q.isLexicalHandler()) {
@@ -1402,7 +1402,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (q.isDeclHandler()) {
                 q.internalEntityDecl(name, value);
             }
-            Entity entity = Entity.createInternal(factory, name, value, reader.getPublicId(), reader.getSystemId(), line, col);
+            Entity entity = Entity.createInternal(name, value, reader.getPublicId(), reader.getSystemId(), line, col);
             dtd.addEntity(entity);
             c = reader.read();
             if (isS(c)) {
@@ -1453,7 +1453,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (q.isDeclHandler()) {
                     q.externalEntityDecl(name, pubid, r);
                 }
-                Entity entity = Entity.createExternal(factory, name, pubid, sysid);
+                Entity entity = Entity.createExternal(name, pubid, sysid);
                 dtd.addEntity(entity);
             }
         }
@@ -2217,7 +2217,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
                             entityStack.add(entity);
-                            CPReader entityReader = entity.getReader(q, this, reader);
+                            CPReader entityReader = getEntityReader(reader, entity);
                             readContent(entityReader, true);
                             entityReader.close();
                             entityStack.remove(entityStack.size() - 1);
@@ -2299,6 +2299,50 @@ public class BFOXMLReader implements XMLReader, Locator {
             return false;
         }
     }
+    
+    private CPReader getEntityReader(final CPReader reader, final Entity entity) throws SAXException, IOException {
+        final String parentSystemId = reader.getSystemId();
+        final boolean xml11 = reader.isXML11();
+        final String publicId = entity.getPublicId();
+        final String systemId = entity.getSystemId();
+
+        if (entity.getValue() != null) {
+            return CPReader.getReader(entity.getValue(), publicId, systemId, entity.getLineNumber(), entity.getColumnNumber(), xml11);
+        } else {
+            InputSource source = null;
+            final String resolvedSystemId = factory.resolve(parentSystemId, systemId);
+
+            // Stage 1: ask EntityResolver
+            if (publicId == null && systemId == null) {
+                if (entity.isDTD() && q.isEntityResolver2()) {
+                    source = q.getExternalSubset(entity.getName(), parentSystemId);
+                }
+            } else {
+                if (q.isEntityResolver2()) {
+                    source = q.resolveEntity(factory.xercescompat ? null : entity.getName(), publicId, parentSystemId, systemId != null ? systemId : "");
+                } else if (q.isEntityResolver()) {
+                    source = q.resolveEntity(publicId, resolvedSystemId != null ? resolvedSystemId : "");
+                }
+            }
+
+            // Stage 2: ask Factory
+            if (source == null) {
+                // We have to ask the factory, so do security checks here
+                if (entity.isParameter() && !featureExternalParameterEntities) {
+                    error(reader, "External parameter entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+                } else if (entity.isGeneral() && !featureExternalGeneralEntities) {
+                    error(reader, "External general entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+                }
+                source = factory.resolveEntity(publicId, resolvedSystemId);
+            }
+
+            if (source != null) {
+                return CPReader.normalize(CPReader.getReader(source), xml11);
+            } else {
+                return null;
+            }
+        }
+    }
 
     /**
      * A PEReference expanding reader
@@ -2345,7 +2389,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (q.isLexicalHandler()) {
                         //    q.startEntity("%" + entity.getName());
                         }
-                        reader = entity.getReader(q, BFOXMLReader.this, reader);
+                        reader = getEntityReader(reader, entity);
                         entityStack.add(entity);
                         readerStack.add(reader);
                         c2 = reader.read();

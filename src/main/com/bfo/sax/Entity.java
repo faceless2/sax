@@ -1,13 +1,12 @@
 package com.bfo.sax;
 
-import java.security.MessageDigest;
-import java.net.URL;
-import java.util.*;
-import java.io.*;
-import org.xml.sax.*;
-import org.xml.sax.ext.*;
-
 class Entity {
+
+    private static final int TYPE_DTD = -999;
+    private static final int TYPE_EXTERNAL = -998;
+    private static final int TYPE_SIMPLE = -997;
+    private static final int TYPE_CHARACTER = -996;
+    private static final int TYPE_INVALID = -995;
 
     static final Entity LT = createSimple("lt", "<");
     static final Entity GT = createSimple("gt", ">");
@@ -15,7 +14,6 @@ class Entity {
     static final Entity APOS = createSimple("apos", "'");
     static final Entity QUOT = createSimple("quot", "\"");
 
-    private final BFOSAXParserFactory factory;
     private final String name, value, systemId, publicId;
     private final int line, column;
 
@@ -24,7 +22,7 @@ class Entity {
      * @param codepoint the codepoint
      */
     static Entity createCharacter(int codepoint) {
-        return new Entity(null, null, Character.toString(codepoint), null, null, -1, -1);
+        return new Entity(null, Character.toString(codepoint), null, null, TYPE_CHARACTER, TYPE_CHARACTER);
     }
 
     /**
@@ -35,7 +33,7 @@ class Entity {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(null, name, null, null, null, -1, -1);
+        return new Entity(name, null, null, null, TYPE_INVALID, TYPE_INVALID);
     }
 
     /**
@@ -47,37 +45,34 @@ class Entity {
         if (name == null || name.length() == 0 || value == null) {
             throw new IllegalArgumentException();
         }
-        return new Entity(null, name, value, null, null, -1, -1);
+        return new Entity(name, value, null, null, TYPE_SIMPLE, TYPE_SIMPLE);
     }
 
     /**
      * Create an entity reference to a DTD
-     * @param factory the factory
      * @param name the name of the DTD
      * @param publicId the publicID of this DTD
      * @param systemId the systemID of this DTD
      */
-    static Entity createDTD(BFOSAXParserFactory factory, String name, String publicId, String systemId) {
-        return new Entity(factory, name, null, publicId, systemId, -999, -999);
+    static Entity createDTD(String name, String publicId, String systemId) {
+        return new Entity(name, null, publicId, systemId, TYPE_DTD, TYPE_DTD);
     }
 
     /**
      * Create an external entity reference, for a general or parameter entity
-     * @param factory the factory
      * @param name the name of the entity, eg "nbsp" or "%param" - required and not empty
      * @param publicId the publicID of this Entity
      * @param systemId the systemID of this Entity
      */
-    static Entity createExternal(BFOSAXParserFactory factory, String name, String publicId, String systemId) {
+    static Entity createExternal(String name, String publicId, String systemId) {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(factory, name, null, publicId, systemId, -1, -1);
+        return new Entity(name, null, publicId, systemId, TYPE_EXTERNAL, TYPE_EXTERNAL);
     }
 
     /**
      * Create an internal entity reference, for a general or parameter entity
-     * @param factory the factory
      * @param name the name of the entity, eg "nbsp" or "%param" - required and not empty
      * @param value the value of the entity - required
      * @param publicId the publicID of the document where this Entity was defined
@@ -85,15 +80,20 @@ class Entity {
      * @param line the line-number in the document where this Entity was defined
      * @param column the column-number in the document where this Entity was defined
      */
-    static Entity createInternal(BFOSAXParserFactory factory, String name, String value, String publicId, String systemId, int line, int column) {
+    static Entity createInternal(String name, String value, String publicId, String systemId, int line, int column) {
         if (name == null || name.length() == 0 || value == null) {
             throw new IllegalArgumentException();
         }
-        return new Entity(factory, name, value, publicId, systemId, line, column);
+        if (line < 0) {
+            line = -1;
+        }
+        if (column < 0) {
+            column = -1;
+        }
+        return new Entity(name, value, publicId, systemId, line, column);
     }
 
-    private Entity(BFOSAXParserFactory factory, String name, String value, String publicId, String systemId, int line, int column) {
-        this.factory = factory;
+    private Entity(String name, String value, String publicId, String systemId, int line, int column) {
         this.name = name;
         this.value = value;
         this.publicId = publicId;
@@ -113,65 +113,67 @@ class Entity {
             return "{entity-external-dtd: name=" + BFOXMLReader.fmt(value) + " publicid=" + BFOXMLReader.fmt(publicId) + " system=" + BFOXMLReader.fmt(systemId) + "}";
         } else if (isExternal()) {
             return "{entity-external: name=" + BFOXMLReader.fmt(name) + " publicid=" + BFOXMLReader.fmt(publicId) + " system=" + BFOXMLReader.fmt(systemId) + "}";
-        } else {
+        } else if (isInternal()) {
             return "{entity-internal: name=" + BFOXMLReader.fmt(name) + " value=" + BFOXMLReader.fmt(value) + "}";
+        } else {
+            throw new Error();
         }
-    }
-
-    /**
-     * Return true if the entity is invalid - it has a name only, which was the original reference
-     */
-    boolean isInvalid() {
-        return factory == null && name != null && value == null;
     }
 
     /**
      * Return true if the entity is a simple Character entity, eg &#10;
      */
     boolean isCharacter() {
-        return name == null;
+        return column == TYPE_CHARACTER;
+    }
+
+    /**
+     * Return true if the entity is invalid - it has a name only, which was the original reference
+     */
+    boolean isInvalid() {
+        return column == TYPE_INVALID;
     }
 
     /**
      * Return true if the value should be parsed as a simple string (eg &amp), not as markup
      */
     boolean isSimple() {
-        return factory == null && name != null && value != null;
+        return column == TYPE_SIMPLE;
     }
 
     /**
      * Return true if the value is an external entity
      */
     boolean isExternal() {
-        return factory != null && name != null && value == null;
+        return column == TYPE_EXTERNAL;
     }
 
     /**
      * Return true if the value is an internal entity
      */
     boolean isInternal() {
-        return factory != null && name != null && value != null;
+        return column >= -1;
     }
 
     /**
      * Return true if this is a DTD entity
      */
     boolean isDTD() {
-        return line == -999;
+        return column == TYPE_DTD;
     }
 
     /**
-     * Return true if this is a general entity
+     * Return true if this is a general entity, which can internal or external
      */
     boolean isGeneral() {
-        return !isDTD() && factory != null && name != null && name.charAt(0) != '%';
+        return (isExternal() || isInternal()) && name.charAt(0) != '%';
     }
 
     /**
      * Return true if this is a parameter entity
      */
     boolean isParameter() {
-        return !isDTD() && factory != null && name != null && name.charAt(0) == '%';
+        return (isExternal() || isInternal()) && name.charAt(0) == '%';
     }
 
     //-------------------------------------------------------------------------------------
@@ -204,52 +206,18 @@ class Entity {
         return systemId;
     }
 
-    CPReader getReader(EntityResolver resolver, BFOXMLReader xml, CPReader reader) throws IOException, SAXException {
-        String parentSystemId = reader.getSystemId();
-        boolean xml11 = reader.isXML11();
-        boolean er2 = resolver instanceof Queue ? ((Queue)resolver).isEntityResolver2() : resolver instanceof EntityResolver2;
-        if (value != null) {
-            return CPReader.getReader(value, publicId, systemId, line, column, xml11);
-        } else {
-            if (isDTD()) {
-                // DTD, ok
-            } else if (isParameter() && !xml.getFeature("http://xml.org/sax/features/external-parameter-entities")) {
-                xml.error(reader, "External parameter entity " + this + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
-            } else if (isGeneral() && !xml.getFeature("http://xml.org/sax/features/external-general-entities")) {
-                xml.error(reader, "External general entity " + this + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
-            }
-            InputSource source = null;
-            if (getPublicId() == null && getSystemId() == null) {
-                if (isDTD() && er2) {
-                    source = ((EntityResolver2)resolver).getExternalSubset(getName(), parentSystemId);
-                }
-            } else {
-                String name = getName();
-                if (factory.xercescompat) {
-                    name = null;
-                }
-                String systemId = getSystemId();
-                String resolvedSystemId = factory.resolve(parentSystemId, systemId);
-                if (er2) {
-                    if (systemId == null) {
-                        systemId = "";
-                    }
-                    source = ((EntityResolver2)resolver).resolveEntity(name, getPublicId(), parentSystemId, systemId);
-                } else if (resolver != null) {
-                    if (resolvedSystemId == null) {
-                        resolvedSystemId = "";
-                    }
-                    source = resolver.resolveEntity(getPublicId(), resolvedSystemId);
-                }
-                if (source == null) {
-                    source = factory.resolveEntity(getPublicId(), resolvedSystemId);
-                }
-            }
-            if (source != null) {
-                return CPReader.normalize(CPReader.getReader(source), xml11);
-            }
-            return null;
-        }
+    /**
+     * For internal entities, return the line number it was created at
+     */
+    int getLineNumber() {
+        return line;
+    }
+
+    /**
+     * For internal entities, return the column number it was created at
+     */
+    int getColumnNumber() {
+        return column;
     }
 
 }
