@@ -66,11 +66,11 @@ abstract class CPReader {
             }
 
             @Override public String getPublicId() {
-                return reader.getPublicId();
+                return reader == null ? null : reader.getPublicId();
             }
 
             @Override public String getSystemId() {
-                return reader.getSystemId();
+                return reader == null ? null : reader.getSystemId();
             }
 
             @Override public int read() throws SAXException, IOException {
@@ -177,16 +177,16 @@ abstract class CPReader {
                 b.close();
             }
             @Override public String getPublicId() {
-                return r.getPublicId();
+                return r == null ? null : r.getPublicId();
             }
             @Override public String getSystemId() {
-                return r.getSystemId();
+                return r == null ? null : r.getSystemId();
             }
             @Override public int getLineNumber() {
-                return r.getLineNumber();
+                return r == null ? -1 : r.getLineNumber();
             }
             @Override public int getColumnNumber() {
-                return r.getColumnNumber();
+                return r == null ? -1 : r.getColumnNumber();
             }
             @Override public void setXML11(boolean xml11) {
                 a.setXML11(xml11);
@@ -253,8 +253,10 @@ abstract class CPReader {
     static CPReader getReader(InputSource in) throws IOException, SAXException {
         if (in.getCharacterStream() != null) {
             return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId());
-        } else {
+        } else if (in.getByteStream() != null) {
             return getReader(in.getByteStream(), in.getPublicId(), in.getSystemId());
+        } else {
+            throw new SAXException("InputSource has no streams");
         }
     }
 

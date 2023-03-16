@@ -295,7 +295,7 @@ class ThreadedQueue extends Queue {
 
     public void run() throws SAXException, IOException {
         Object[] o = new Object[8];
-        boolean active = true;
+        boolean active = reply.get() == null;// in case it fails before we start
         while (active) {
             MsgType type = peek(o);
             boolean exchange = false;   // Set if message expects a reply
@@ -376,15 +376,23 @@ class ThreadedQueue extends Queue {
                         break;
                     case warning:
                         exchange = true;        // reply is null but this ensures other thread waits for any exception
-                        errorHandler.warning((SAXParseException)o[0]);
+                        if (errorHandler != null) {
+                            errorHandler.warning((SAXParseException)o[0]);
+                        }
                         break;
                     case error:
                         exchange = true;        // reply is null but this ensures other thread waits for any exception
-                        errorHandler.error((SAXParseException)o[0]);
+                        if (errorHandler != null) {
+                            errorHandler.error((SAXParseException)o[0]);
+                        } else {
+                            throw (SAXParseException)o[0];  // error with no handler must fail
+                        }
                         break;
                     case fatalError:
                         exchange = true;        // reply is null but this ensures other thread waits for any exception
-                        errorHandler.fatalError((SAXParseException)o[0]);
+                        if (errorHandler != null) {
+                            errorHandler.fatalError((SAXParseException)o[0]);
+                        }
                         throw (SAXParseException)o[0];  // fatalError must fail
                     case getExternalSubset:
                         exchange = true;

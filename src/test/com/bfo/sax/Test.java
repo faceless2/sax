@@ -520,22 +520,23 @@ public class Test {
 
     public static void main(String[] argsa) throws Exception {
         newfactory = new BFOSAXParserFactory();
-        oldfactory = SAXParserFactory.newDefaultInstance();
         newfactory.setNamespaceAware(true);
-        oldfactory.setNamespaceAware(true);
 
         List<String> args = new ArrayList<String>(Arrays.asList(argsa));
 
         boolean filearg = false;
-        for (String s : args) {
+        for (int i=0;i<args.size();i++) {
+            String s = args.get(i);
             if (!s.startsWith("--")) {
                 filearg = true;
+            } else if (s.equals("--old-class")) {
+                i++;
             }
         }
         if (!filearg) {
             File f = new File("samples/xmlconf/xmlconf.xml");
             List<Map<String,String>> tests = new ArrayList<Map<String,String>>();
-            oldfactory.newSAXParser().parse(f, new DefaultHandler() {
+            SAXParserFactory.newDefaultInstance().newSAXParser().parse(f, new DefaultHandler() {
                 List<String> baselist = new ArrayList<String>();
                 public void startElement(String uri, String localName, String qName, Attributes attributes) {
                     String base = attributes.getValue("xml:base");
@@ -609,6 +610,9 @@ public class Test {
             } else if (arg.equals("--both")) {
                 newparser = true;
                 oldparser = true;
+            } else if (arg.equals("--old-class")) {
+                oldfactory = SAXParserFactory.newInstance(args.get(++i), null);
+                oldfactory.setNamespaceAware(true);
             } else if (arg.equals("--decl")) {
                 decl = true;
             } else if (arg.equals("--lexical")) {
@@ -634,6 +638,10 @@ public class Test {
             } else if (arg.equals("--nothreads")) {
                 newfactory.setFeature("http://bfo.com/sax/features/threads", false);
             } else {
+                if (oldfactory == null) {
+                    oldfactory = SAXParserFactory.newDefaultInstance();
+                    oldfactory.setNamespaceAware(true);
+                }
                 Test test = new Test();
                 test.newparser = newparser;
                 test.oldparser = oldparser;

@@ -95,12 +95,22 @@ class Entity {
         return systemId;
     }
 
-    CPReader getReader(EntityResolver resolver, String parentSystemId, boolean xml11) throws IOException, SAXException {
+    CPReader getReader(EntityResolver resolver, BFOXMLReader xml, CPReader reader) throws IOException, SAXException {
+        String parentSystemId = reader.getSystemId();
+        boolean xml11 = reader.isXML11();
+        boolean er2 = resolver instanceof Queue ? ((Queue)resolver).isEntityResolver2() : resolver instanceof EntityResolver2;
         if (value != null) {
             return CPReader.getReader(value, publicId, systemId, line, column, xml11);
         } else {
+            if (dtd == null) {
+                // DTD, ok
+            } else if (getName().startsWith("%") && !xml.getFeature("http://xml.org/sax/features/external-parameter-entities")) {
+                xml.error(reader, "External parameter entity " + this + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+            } else if (!getName().startsWith("%") && !xml.getFeature("http://xml.org/sax/features/external-general-entities")) {
+                xml.error(reader, "External general entity " + this + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+            }
             InputSource source = null;
-            if (dtd == null && getPublicId() == null && getSystemId() == null && resolver instanceof EntityResolver2) {
+            if (dtd == null && getPublicId() == null && getSystemId() == null && er2) {
                 source = ((EntityResolver2)resolver).getExternalSubset(getName(), parentSystemId);
             } else {
                 String name = getName();
@@ -109,7 +119,7 @@ class Entity {
                 }
                 String systemId = getSystemId();
                 String resolvedSystemId = factory.resolve(parentSystemId, systemId);
-                if (resolver instanceof EntityResolver2) {
+                if (er2) {
                     if (systemId == null) {
                         systemId = "";
                     }

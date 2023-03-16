@@ -3,6 +3,7 @@ package com.bfo.sax;
 import javax.xml.parsers.*;
 import javax.xml.validation.Schema;
 import org.xml.sax.*;
+import javax.xml.XMLConstants;
 import java.util.*;
 import java.net.*;
 import java.io.*;
@@ -17,9 +18,24 @@ public class BFOSAXParserFactory extends SAXParserFactory {
     public List<String> getSupportedFeatures() {
         List<String> l = new ArrayList<String>();
         l.add("http://xml.org/sax/features/namespaces");
+        l.add("http://xml.org/sax/features/validation");
+        l.add("http://xml.org/sax/features/external-general-entities");
+        l.add("http://xml.org/sax/features/external-parameter-entities");
+        l.add("http://xml.org/sax/features/string-interning");
         l.add("http://xml.org/sax/features/namespace-prefixes");
         l.add("http://xml.org/sax/features/use-entity-resolver2");
         l.add(FEATURE_THREADS);
+        l.add(XMLConstants.FEATURE_SECURE_PROCESSING);
+        return Collections.<String>unmodifiableList(l);
+    }
+
+    public List<String> getSupportedProperties() {
+        List<String> l = new ArrayList<String>();
+        l.add("http://xml.org/sax/properties/lexical-handler");
+        l.add("http://xml.org/sax/properties/declaration-handler");
+        l.add("http://xml.org/sax/properties/document-xml-version");
+        l.add("http://apache.org/xml/properties/input-buffer-size");
+        l.add("http://javax.xml.XMLConstants/property/accessExternalDTD");
         return Collections.<String>unmodifiableList(l);
     }
 

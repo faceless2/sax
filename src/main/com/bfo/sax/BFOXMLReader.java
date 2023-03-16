@@ -4,16 +4,24 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.net.URL;
+import javax.xml.XMLConstants;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 
 public class BFOXMLReader implements XMLReader, Locator {
 
     private int c, len;
-    private char[] buf = new char[2048];
+    private char[] buf;
     private CPReader curreader;
     private int inputBufferSize;
-    private boolean standalone, entityResolver2 = true, multiThreaded = true;
+    private boolean standalone;                                 // TODO
+    private boolean featureThreads = true;
+    private boolean featureEntityResolver2 = true;
+    private boolean featureExternalGeneralEntities = true;
+    private boolean featureExternalParameterEntities = true;
+    private boolean featureNamespacePrefixes = true;            // TODO
+    private boolean featureSecureProcessing = true;             // TODO
+    private String externalPrefixes = "all";                    // TODO
     private Queue q;
     private DTD dtd;
     private ContentHandler contentHandler;
@@ -49,12 +57,22 @@ public class BFOXMLReader implements XMLReader, Locator {
     @Override public boolean getFeature(String name) {
        if ("http://xml.org/sax/features/namespaces".equals(name)) {
            return true;
-       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
+       } else if ("http://xml.org/sax/features/validation".equals(name)) {
            return false;
+       } else if ("http://xml.org/sax/features/string-interning".equals(name)) {
+           return false;
+       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
+           return featureNamespacePrefixes;
+       } else if ("http://xml.org/sax/features/external-general-entities".equals(name)) {
+           return featureExternalGeneralEntities;
+       } else if ("http://xml.org/sax/features/external-parameter-entities".equals(name)) {
+           return featureExternalParameterEntities;
+       } else if (XMLConstants.FEATURE_SECURE_PROCESSING.equals(name)) {
+           return featureSecureProcessing;
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
-           return entityResolver2;
+           return featureEntityResolver2;
        } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
-           return multiThreaded;
+           return featureThreads;
        } else {
            return false;
        }
@@ -64,14 +82,24 @@ public class BFOXMLReader implements XMLReader, Locator {
            if (value != true) {
                throw new SAXNotSupportedException(name + " only supports true");
            }
-       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
+       } else if ("http://xml.org/sax/features/validation".equals(name)) {
            if (value != false) {
                throw new SAXNotSupportedException(name + " only supports false");
            }
+       } else if ("http://xml.org/sax/features/string-interning".equals(name)) {
+           //noop
+       } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
+           featureNamespacePrefixes = value;    // TODO
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
-           entityResolver2 = value;
+           featureEntityResolver2 = value;
+       } else if ("http://xml.org/sax/features/external-general-entities".equals(name)) {
+           featureExternalGeneralEntities = value;
+       } else if ("http://xml.org/sax/features/external-parameter-entities".equals(name)) {
+           featureExternalParameterEntities = value;
+       } else if (XMLConstants.FEATURE_SECURE_PROCESSING.equals(name)) {
+           featureSecureProcessing = value;
        } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
-           multiThreaded = value;
+           featureThreads = value;
        } else {
            throw new SAXNotRecognizedException(name);
        }
@@ -85,6 +113,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             return curreader != null && curreader.isXML11();
         } else if ("http://apache.org/xml/properties/input-buffer-size".equals(name)) {
             return inputBufferSize;
+        } else if ("http://javax.xml.XMLConstants/property/accessExternalDTD".equals(name)) {
+            return externalPrefixes;
         }
         throw new SAXNotRecognizedException(name);
     }
@@ -93,21 +123,30 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (value instanceof LexicalHandler || value == null) {
                 lexicalHandler = (LexicalHandler)value;
             } else {
-               throw new SAXNotSupportedException(name + " wrong class");
+                throw new SAXNotSupportedException(name + " wrong class");
             }
         } else if ("http://xml.org/sax/properties/declaration-handler".equals(name)) {
             declHandler = (DeclHandler)value;
             if (value instanceof DeclHandler || value == null) {
                 declHandler = (DeclHandler)value;
             } else {
-               throw new SAXNotSupportedException(name + " wrong class");
+                throw new SAXNotSupportedException(name + " wrong class");
             }
         } else if ("http://apache.org/xml/properties/input-buffer-size".equals(name)) {
             if (value instanceof Integer) {
                 int v = ((Integer)value).intValue();
                 inputBufferSize = v <= 0 ? 0 : Math.max(16, v);
             } else {
-               throw new SAXNotSupportedException(name + " wrong class");
+                throw new SAXNotSupportedException(name + " wrong class");
+            }
+        } else if ("http://javax.xml.XMLConstants/property/accessExternalDTD".equals(name)) {
+            if (value == null) {
+                value = "";
+            }
+            if (value instanceof String) {
+                this.externalPrefixes = (String)value;
+            } else {
+                throw new SAXNotSupportedException(name + " wrong class");
             }
         } else {
             throw new SAXNotRecognizedException(name);
@@ -150,8 +189,11 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
 
     @Override public void parse(InputSource in) throws IOException, SAXException {
+        if (in == null) {
+            throw new IllegalArgumentException("InputSource is null");
+        }
         if (q != null) {
-            throw new IllegalStateException("Already parsed");
+            throw new IllegalStateException("Parsing");
         }
         if (in.getSystemId() != null) {
             String systemId = factory.resolve("", in.getSystemId());
@@ -163,8 +205,18 @@ public class BFOXMLReader implements XMLReader, Locator {
                 in = in2;
             }
         }
+        if (in.getCharacterStream() == null && in.getByteStream() == null && in.getSystemId() != null) {
+            // Xerces does not call our set handler here.
+            InputSource in2 = factory.resolveEntity(in.getPublicId(), in.getSystemId());
+            if (in2 != null) {
+                in = in2;
+            }
+        }
+        if (in.getCharacterStream() == null && in.getByteStream() == null) {
+            throw new SAXException("Can't resolve InputSource: no stream");
+        }
         EntityResolver entityResolver = this.entityResolver;
-        if (!entityResolver2 && entityResolver instanceof EntityResolver2) {
+        if (!featureEntityResolver2 && entityResolver instanceof EntityResolver2) {
             entityResolver = new EntityResolver() {
                 public InputSource resolveEntity(String pubid, String sysid) throws SAXException, IOException {
                     return BFOXMLReader.this.entityResolver.resolveEntity(pubid, sysid);
@@ -173,72 +225,83 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
 
-        if (multiThreaded) {
-            q = new ThreadedQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
-            final InputSource fin = in;
-            final ThreadedQueue tq = (ThreadedQueue)q;
-            Runnable r = new Runnable() {
-                public void run() {
-                    try {
+        try {
+            buf = new char[2048];
+            c = len = 0;
+            if (featureThreads) {
+                q = new ThreadedQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
+                final InputSource fin = in;
+                final ThreadedQueue tq = (ThreadedQueue)q;
+                Runnable r = new Runnable() {
+                    public void run() {
                         try {
-                            if (tq.isContentHandler()) {
-                                tq.setDocumentLocator(BFOXMLReader.this);
-                                tq.startDocument();
+                            try {
+                                if (tq.isContentHandler()) {
+                                    tq.setDocumentLocator(BFOXMLReader.this);
+                                    tq.startDocument();
+                                }
+                                curreader = CPReader.normalize(CPReader.getReader(fin), false);
+                                readDocument(curreader);
+                                if (tq.isContentHandler()) {
+                                    tq.endDocument();
+                                }
+                                tq.close();
+                            } catch (SAXParseException e) {
+                                // This will push a fatalError to the q and wait;
+                                // the main app thread will pop this message, call
+                                // fatalError, then throw this exception again.
+                                // That will be caught on the main thread, passed back
+                                // to this thread where it will trigger an "echo"
+                                // exception of some sort on this thread again to
+                                // halt.
+                                tq.fatalError(e);
+                            } catch (Exception e) {
+                                tq.fatalError(new SAXParseException("Uncaught Exception", BFOXMLReader.this, e));
                             }
-                            curreader = CPReader.normalize(CPReader.getReader(fin), false);
-                            readDocument(curreader);
-                            if (tq.isContentHandler()) {
-                                tq.endDocument();
-                            }
-                            tq.close();
-                        } catch (SAXParseException e) {
-                            // This will push a fatalError to the q and wait;
-                            // the main app thread will pop this message, call
-                            // fatalError, then throw this exception again.
-                            // That will be caught on the main thread, passed back
-                            // to this thread where it will trigger an "echo"
-                            // exception of some sort on this thread again to
-                            // halt.
-                            tq.fatalError(e);
                         } catch (Exception e) {
-                            tq.fatalError(new SAXParseException("Uncaught Exception", BFOXMLReader.this, e));
+                            // All this does is capture the "echo" exception
                         }
-                    } catch (Exception e) {
-                        // All this does is capture the "echo" exception
+                    }
+                };
+                if (threadPool == null) {
+                    new Thread(r).start();
+                } else {
+                    try {
+                        threadPool.submit(r).get();
+                    } catch (ExecutionException e) {
+                        throw new RuntimeException(e);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
                     }
                 }
-            };
-            if (threadPool == null) {
-                new Thread(r).start();
+                tq.run();
             } else {
-                try {
-                    threadPool.submit(r).get();
-                } catch (ExecutionException e) {
-                    throw new RuntimeException(e);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-            tq.run();
-        } else {
-            q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
+                q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
 
-            curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
-            try {
-                if (q.isContentHandler()) {
-                    q.setDocumentLocator(this);
-                    q.startDocument();
+                curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
+                try {
+                    if (q.isContentHandler()) {
+                        q.setDocumentLocator(this);
+                        q.startDocument();
+                    }
+                    curreader = CPReader.normalize(CPReader.getReader(in), false);
+                    readDocument(curreader);
+                    if (q.isContentHandler()) {
+                        q.endDocument();
+                    }
+                } catch (SAXParseException e) {
+                    q.fatalError(e);
+                    throw e;
+                } finally {
                 }
-                curreader = CPReader.normalize(CPReader.getReader(in), false);
-                readDocument(curreader);
-                if (q.isContentHandler()) {
-                    q.endDocument();
-                }
-            } catch (SAXParseException e) {
-                q.fatalError(e);
-                throw e;
-            } finally {
             }
+        } finally {
+            q = null;
+            buf = null;
+            curreader = null;
+            dtd = null;
+            stack.clear();
+            entityStack.clear();
         }
     }
 
@@ -322,7 +385,7 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     // PEReference [Parameter entity references] are recognized anywhere in the DTD (internal and external subsets and external parameter entities), except in literals [EntityValue, AttValue, SystemLiteral, PubidLiteral], processing instructions, comments, and the contents of ignored conditional sections (see 3.4 Conditional Sections). They are also recognized in entity value literals [EntityValue]. The use of parameter entities in the internal subset is restricted as described below.
 
-    private String error(final CPReader reader, String msg) throws SAXException, IOException {
+    String error(final CPReader reader, String msg) throws SAXException, IOException {
         throw new SAXParseException(msg, reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
     }
 
@@ -853,7 +916,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                                 error(reader, "Self-referencing entity &" + entity.getName() + ";");
                             } else {
                                 entityStack.add(entity);
-                                CPReader entityReader = entity.getReader(null, null, reader.isXML11());
+                                CPReader entityReader = entity.getReader(null, this, reader);
                                 readAttValue(entityReader, -1); // recursive!
                                 entityReader.close();
                                 entityStack.remove(entityStack.size() - 1);
@@ -1168,7 +1231,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         CPReader dtdreader = null;
         if (pubid == null && sysid == null) {
             // First, to match Xerces
-            dtdreader = dtdentity.getReader(q, reader.getSystemId(), reader.isXML11());
+            dtdreader = dtdentity.getReader(q, this, reader);
         }
         if (q.isLexicalHandler()) {
             q.startDTD(name, pubid, sysid);
@@ -1182,7 +1245,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             internalSubset.close();
         }
         if (pubid != null || sysid != null) {
-            dtdreader = dtdentity.getReader(q, reader.getSystemId(), reader.isXML11());
+            dtdreader = dtdentity.getReader(q, this, reader);
         }
         if (dtdreader != null) {
             if (q.isLexicalHandler()) {
@@ -2151,7 +2214,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                             error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
                             entityStack.add(entity);
-                            CPReader entityReader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
+                            CPReader entityReader = entity.getReader(q, this, reader);
                             readContent(entityReader, true);
                             entityReader.close();
                             entityStack.remove(entityStack.size() - 1);
@@ -2281,7 +2344,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (q.isLexicalHandler()) {
                         //    q.startEntity("%" + entity.getName());
                         }
-                        reader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
+                        reader = entity.getReader(q, BFOXMLReader.this, reader);
                         entityStack.add(entity);
                         readerStack.add(reader);
                         c2 = reader.read();
