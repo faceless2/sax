@@ -1427,7 +1427,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "Bad token " + attMode);
                 }
             } else {
-                attMode = "#FIXED";
+                attMode = null; // "#FIXED";
                 defaultValue = readAttValue(reader, c);
                 c = reader.read();
             }
@@ -1771,6 +1771,19 @@ public class BFOXMLReader implements XMLReader, Locator {
             Map<String,Attribute> defaultAtts = element == null ? null : element.getAttributesWithDefaults();
             if (defaultAtts != null) {
                 defaultAtts = new HashMap<String,Attribute>(defaultAtts);
+                if (tmpatts == null) {
+                    tmpatts = new ArrayList<String>();
+                }
+                for (int i=0;i<tmpatts.size();i+=2) {
+                    String attQName = tmpatts.get(i);
+                    if (defaultAtts != null) {
+                        defaultAtts.remove(attQName);
+                    }
+                }
+                for (Attribute a : defaultAtts.values()) {
+                    tmpatts.add(a.getQName());
+                    tmpatts.add(a.getDefaultValue());
+                }
             }
             if (tmpatts != null) {
                 for (int i=0;i<tmpatts.size();i+=2) {
@@ -1808,9 +1821,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                     if (attQName != null) {
                         if (atts == null) {
                             atts = new BFOAttributes();
-                        }
-                        if (defaultAtts != null) {
-                            defaultAtts.remove(attQName);
                         }
                         String attValue = tmpatts.get(i++);
                         int ix = attQName.indexOf(":");
@@ -1864,27 +1874,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                         }
                     } else {
                         i++;
-                    }
-                }
-            }
-            if (defaultAtts != null && !defaultAtts.isEmpty()) {
-                if (atts == null) {
-                    atts = new BFOAttributes();
-                }
-                for (Map.Entry<String,Attribute> e : defaultAtts.entrySet()) {
-                    String attQName = e.getKey();
-                    String attValue = e.getValue().getDefault();
-                    int ix = attQName.indexOf(":");
-                    if (ix > 0) {
-                        String prefix = attQName.substring(0, ix);
-                        String localName = attQName.substring(ix + 1);
-                        String uri = ctx.namespace(prefix);
-                        if (uri == null) {
-                            error(reader, "The prefix " + fmt(prefix) + " for default attribute " + fmt(attQName) + " associated with an element type " + fmt(qName) + " is not bound.");
-                        }
-                        atts.add(uri, localName, attQName, "CDATA", attValue);
-                    } else {
-                        atts.add("", attQName, attQName, "CDATA", attValue);
                     }
                 }
             }
@@ -2290,7 +2279,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         error(reader, "Self-referencing entity &" + entity.getName() + ";");
                     } else {
                         if (q.isLexicalHandler()) {
-                            q.startEntity("%" + entity.getName());
+                        //    q.startEntity("%" + entity.getName());
                         }
                         reader = entity.getReader(q, reader.getSystemId(), reader.isXML11());
                         entityStack.add(entity);
@@ -2309,7 +2298,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     Entity entity = entityStack.remove(entityStack.size() - 1);
                     readerStack.remove(readerStack.size() - 1);
                     if (q.isLexicalHandler()) {
-                        q.endEntity("%" + entity.getName());
+                    //    q.endEntity("%" + entity.getName());
                     }
                     reader = readerStack.isEmpty() ? freader : readerStack.get(readerStack.size() - 1);
                     c2 = reader.read();

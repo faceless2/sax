@@ -51,7 +51,7 @@ class Element {
                 throw new IllegalArgumentException("ID attr \"" + name + "\" cannot be " + mode);
             }
         }
-        Attribute a = new Attribute(type, mode, value);
+        Attribute a = new Attribute(name, type, mode, value);
         if (!atts.containsKey(name)) {
             atts.put(name, a);
             if (value != null) {

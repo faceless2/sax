@@ -4,11 +4,12 @@ import java.util.*;
 
 final class Attribute {
 
-    final String type, mode, value;
+    final String qName, type, mode, value;
 
-    Attribute(String type, String mode, String value) {
+    Attribute(String qName, String type, String mode, String value) {
+        this.qName = qName;
         this.type = type;
-        this.mode = mode;
+        this.mode = mode != null ? mode : "#FIXED";
         if (value != null && !"CDATA".equals(type)) {
             // Normalize default
             StringBuilder sb = new StringBuilder();
@@ -32,13 +33,16 @@ final class Attribute {
         this.value = value;
     }
 
+    public String getQName() {
+        return qName;
+    }
     public String getType() {
         return type;
     }
     public String getMode() {
         return mode;
     }
-    public String getDefault() {
+    public String getDefaultValue() {
         return value;
     }
 
