@@ -254,7 +254,7 @@ abstract class CPReader {
         if (in.getCharacterStream() != null) {
             return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId());
         } else if (in.getByteStream() != null) {
-            return getReader(in.getByteStream(), in.getPublicId(), in.getSystemId());
+            return getReader(in.getByteStream(), in.getEncoding(), in.getPublicId(), in.getSystemId());
         } else {
             throw new SAXException("InputSource has no streams");
         }
@@ -304,8 +304,9 @@ abstract class CPReader {
 
     /**
      * Return a new CPReader that reads from the InputStream, handling BOM and (if xml), XML encoding
+     * @param sourceenc the encoding, as specified externall. Priority is BOM, XML encoding (if specified) and then this
      */
-    static CPReader getReader(final InputStream in, final String publicId, final String systemId) throws IOException, SAXException {
+    private static CPReader getReader(final InputStream in, String sourceenc, final String publicId, final String systemId) throws IOException, SAXException {
         final boolean xml = true;
         byte[] b = new byte[xml ? 80 : 4];
         int len = 0;
@@ -319,23 +320,23 @@ abstract class CPReader {
         String bomenc = null, xmlenc = null;
         int skip = 0;
         if (b[0] == (byte)0xfe && b[1] == (byte)0xff) {
-            bomenc = "utf-16be";
+            bomenc = "UTF-16BE";
             skip = 2;
         } else if (b[0] == (byte)0xff && b[1] == (byte)0xfe) {
-            bomenc = "utf-16le";
+            bomenc = "UTF-16LE";
             skip = 2;
         } else if (b[0] == (byte)0xef && b[1] == (byte)0xbb && b[2] == (byte)0xbf) {
-            bomenc = "utf-8";
+            bomenc = "UTF-8";
             skip = 3;
         } else if (xml && b[0] == 0 && b[1] == (byte)0x3c && b[2] == 0 && b[3] == (byte)0x3f) {
-            bomenc = "utf-16be";
+            bomenc = "UTF-16BE";
         } else if (xml && b[0] == (byte)0x3c && b[1] == 0 && b[2] == (byte)0x3f && b[3] == (byte)0) {
-            bomenc = "utf-16le";
+            bomenc = "UTF-16LE";
         }
-        if (bomenc != null && bomenc.startsWith("utf-16") && (len&1) == 1) {
+        if (bomenc != null && bomenc.startsWith("UTF-16") && (len&1) == 1) {
             b[len++] = (byte)in.read();
         }
-        String prolog = new String(b, skip, len - skip, bomenc != null ? bomenc : "iso-8859-1");
+        String prolog = new String(b, skip, len - skip, bomenc != null ? bomenc : "ISO-8859-1");
         if (xml) {
             String s = prolog.replaceAll("\t\n\r", " ");
             if (s.length() > 0 && s.charAt(s.length() - 1) == '>' && s.charAt(s.length() - 2) == '?' && s.charAt(0) == '<' && s.charAt(1) == '?' && Character.toLowerCase(s.charAt(2)) == 'x' && Character.toLowerCase(s.charAt(3)) == 'm' && Character.toLowerCase(s.charAt(4)) == 'l') {
@@ -349,31 +350,44 @@ abstract class CPReader {
                         c = s.charAt(0);
                         int i;
                         if ((c == '\'' || c == '"') && (i=s.indexOf((char)c, 1)) > 0) {
-                            xmlenc = s.substring(1, i).toLowerCase();
+                            xmlenc = s.substring(1, i);
                         }
                     }
                 }
             }
         }
-        String enc;
+
+        String enc = null;
         if (bomenc != null) {
             enc = bomenc;
         } else {
-            enc = xmlenc != null ? xmlenc : "utf-8";
-            if ("shift_jis".equals(enc)) {
-                enc = "windows-31j";
+            // If it's XML, use the encoding attribute if specified (fail if invalid), or utf-8
+            // If it's anything else, use the source encoding if specified, or utf-8
+            if (xmlenc != null) {
+                enc = "shift-jis".equalsIgnoreCase(xmlenc) || "shift_jis".equalsIgnoreCase(xmlenc) ? "windows-31j" : xmlenc;
+                try {
+                    enc = Charset.forName(enc).name();
+                } catch (Exception e) {
+                    throw new SAXParseException("Unsupported encoding \"" + xmlenc + "\"", publicId, systemId, -1, -1);
+                }
+            } else if (xml) {
+                enc = "UTF-8";
+            } else if (sourceenc != null) {
+                enc = "shift-jis".equalsIgnoreCase(sourceenc) || "shift_jis".equalsIgnoreCase(sourceenc) ? "windows-31j" : sourceenc;
+                boolean supported = false;
+                try {
+                    enc = Charset.forName(enc).name();
+                } catch (Exception e) {
+                    enc = "UTF-8";
+                }
+            } else {
+                enc = "UTF-8";
             }
-            boolean supported = false;
-            try {
-                supported = Charset.isSupported(enc);
-            } catch (Exception e) {}
-            if (!supported) {
-                throw new SAXParseException("Unsupported encoding \"" + enc + "\"", publicId, systemId, -1, -1);
-            }
-            prolog = new String(prolog.getBytes("iso-8859-1"), enc);
+            prolog = new String(prolog.getBytes("ISO-8859-1"), enc);
         }
+
         CPReader r;
-        if (enc.equals("utf-8") || enc.equals("utf8")) {
+        if (enc.equals("UTF-8")) {
             r = new CPReader() {
                 @Override public int read() throws IOException, SAXException {
                     int v = in.read();
@@ -382,36 +396,36 @@ abstract class CPReader {
                     } else if (v <= 0xDF) {
                         int v2 = in.read();
                         if (v2 < 0 || (v2 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         return ((v&0x1F)<<6) | (v2&0x3F);
                     } else if (v <= 0xEF) {
                         int v2 = in.read();
                         if (v2 < 0 || (v2 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         int v3 = in.read();
                         if (v3 < 0 || (v3 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         return ((v&0x0F)<<12) | ((v2&0x3F)<<6) | (v3&0x3F);
                     } else if (v <= 0xF7) {
                         int v2 = in.read();
                         if (v2 < 0 || (v2 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         int v3 = in.read();
                         if (v3 < 0 || (v3 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         int v4 = in.read();
                         if (v4 < 0 || (v4 & 0xC0) != 0x80) {
-                            throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                            throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                         }
                         v = ((v&0x07)<<18) | ((v2&0x3F)<<12) | ((v3&0x3F)<<6) | (v4&0x3F);
                         return v;
                     } else {
-                        throw new SAXParseException("bad utf-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
+                        throw new SAXParseException("bad UTF-8 sequence", getPublicId(), getSystemId(), getLineNumber(), getColumnNumber());
                     }
                 }
                 @Override public void close() throws IOException {
@@ -424,10 +438,10 @@ abstract class CPReader {
                     return systemId;
                 }
                 @Override public String toString() {
-                    return "{inputstream+utf8 src="+systemId+"}";
+                    return "{inputstream+UTF-8 src="+systemId+"}";
                 }
             };
-        } else if (enc.equals("iso-8859-1") || enc.equals("iso8859-1")) {
+        } else if (enc.equals("ISO-8859-1")) {
             r = new CPReader() {
                 @Override public int read() throws IOException {
                     return in.read();
@@ -442,7 +456,7 @@ abstract class CPReader {
                     return systemId;
                 }
                 @Override public String toString() {
-                    return "{inputstream+8859 src="+systemId+"}";
+                    return "{inputstream+ISO-8859-1 src="+systemId+"}";
                 }
             };
         } else {
