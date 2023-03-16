@@ -786,7 +786,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 error(reader, "Invalid Reference " + hex(v));
                 return null;
             }
-            entity = new Entity(null, Character.toString(v));       // takes codepoint from Java11
+            entity = Entity.createCharacter(v);
         } else if (isNameStartChar(c)) {
             final int start = len;
             append(c);
@@ -815,7 +815,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             } else {
                 entity = dtd == null ? null : dtd.getEntity(name);
                 if (entity == null) {
-                    entity = new Entity(name, null);
+                    entity = Entity.createInvalid(name);
                 }
             }
         } else {
@@ -911,7 +911,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                             append(';');
                         } else if (entity.isExternal()) {
                             error(reader, "Invalid external reference &" + entity.getName() + "; in AttValue");
-                        } else if (entity.isMarkup()) {
+                        } else if (entity.isSimple()) {
+                            append(entity.getValue());
+                        } else {
                             if (entityStack.contains(entity)) {
                                 error(reader, "Self-referencing entity &" + entity.getName() + ";");
                             } else {
@@ -921,8 +923,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                                 entityReader.close();
                                 entityStack.remove(entityStack.size() - 1);
                             }
-                        } else {
-                            append(entity.getValue());
                         }
                     } else if (c == '<') {
                         error(reader, "Invalid AttributeValue " + hex(quote));
@@ -1227,7 +1227,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             error(reader, "Bad token " + hex(c));
         }
         dtd = new DTD(factory, pubid, reader.getSystemId(), sysid);
-        Entity dtdentity = new Entity(factory, null, name, null, pubid, sysid, -1, -1);
+        Entity dtdentity = Entity.createDTD(factory, name, pubid, sysid);
         CPReader dtdreader = null;
         if (pubid == null && sysid == null) {
             // First, to match Xerces
@@ -1402,7 +1402,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (q.isDeclHandler()) {
                 q.internalEntityDecl(name, value);
             }
-            dtd.addEntity(new Entity(factory, dtd, name, value, reader.getPublicId(), reader.getSystemId(), line, col));
+            Entity entity = Entity.createInternal(factory, name, value, reader.getPublicId(), reader.getSystemId(), line, col);
+            dtd.addEntity(entity);
             c = reader.read();
             if (isS(c)) {
                 readS(reader);
@@ -1452,7 +1453,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (q.isDeclHandler()) {
                     q.externalEntityDecl(name, pubid, r);
                 }
-                Entity entity = new Entity(factory, dtd, name, null, pubid, sysid, -1, -1);
+                Entity entity = Entity.createExternal(factory, name, pubid, sysid);
                 dtd.addEntity(entity);
             }
         }
@@ -2209,7 +2210,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     if (q.isLexicalHandler()) {
                         q.startEntity(entity.getName());
                     }
-                    if (entity.isMarkup()) {
+                    if (entity.isSimple()) {
+                        append(entity.getValue());
+                    } else {
                         if (entityStack.contains(entity)) {
                             error(reader, "Self-referencing entity &" + entity.getName() + ";");
                         } else {
@@ -2220,8 +2223,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                             entityStack.remove(entityStack.size() - 1);
                         }
                         start = len;
-                    } else {
-                        append(entity.getValue());
                     }
                     if (q.isLexicalHandler()) {
                         q.endEntity(entity.getName());
