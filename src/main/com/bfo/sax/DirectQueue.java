@@ -117,4 +117,15 @@ class DirectQueue extends Queue {
     @Override public void fatalError(SAXParseException exception) throws SAXException {
         errorHandler.fatalError(exception);
     }
+    @Override public void fatalError2(Exception exception) throws SAXException, IOException {
+        if (exception instanceof IOException) {
+            throw (IOException)exception;
+        } else if (exception instanceof SAXException) {
+            throw (SAXException)exception;
+        } else if (exception instanceof RuntimeException) {
+            throw (RuntimeException)exception;
+        } else {
+            throw new SAXException("Unhandled Exception", exception);
+        }
+    }
 }

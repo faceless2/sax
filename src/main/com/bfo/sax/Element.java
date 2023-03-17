@@ -6,9 +6,9 @@ class Element {
 
     private final DTD dtd;
     private final String name;
-    private final Map<String,Attribute> atts = new HashMap<String,Attribute>();
+    private Map<String,Attribute> atts = new HashMap<String,Attribute>();
     private String model;
-    private boolean hasText;
+    private boolean hasText, closed;
     private Map<String,Attribute> defaultatts;
     private String idattr;
 
@@ -20,11 +20,27 @@ class Element {
     }
 
     void setModel(String model) {
-        if (this.model != null) {
+        if (closed) {
+            throw new IllegalArgumentException("closed");
+        } else if (this.model != null) {
             throw new IllegalArgumentException("Element \"" + getName() + "\" already declared");
         } else if (model != null) {
             this.model = model;
             this.hasText = model == null || model.startsWith("(#PCDATA") || "EMPTY".equals(model) || "ANY".equals(model);
+        }
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    void close() {
+        if (!closed) {
+            closed = true;
+            atts = Collections.<String,Attribute>unmodifiableMap(atts);
+            if (defaultatts != null) {
+                defaultatts = Collections.<String,Attribute>unmodifiableMap(defaultatts);
+            }
         }
     }
 

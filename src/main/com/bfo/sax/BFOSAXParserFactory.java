@@ -12,8 +12,23 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     private final BFOXMLReader FEATUREHOLDER = new BFOXMLReader(this);
     boolean xercescompat = true;
+    private Cache cache = new Cache();
 
+    /**
+     * This feature determines whether parsing takes place in a secondary thread. The default is true
+     */
     public static final String FEATURE_THREADS = "http://bfo.com/sax/features/threads";
+
+    /**
+     * This feature determines whether DTDs and other external entities are cached, based on their checksum if necessary. The default is true
+     */
+    public static final String FEATURE_CACHE = "http://bfo.com/sax/features/cache";
+
+    /**
+     * This feature determines whether two DTDs with the same public Id are assumed to be identical and unchanging for caching purposes. The default is true
+     */
+    public static final String FEATURE_CACHE_PUBLICID = "http://bfo.com/sax/features/cache-publicid";
+
 
     public List<String> getSupportedFeatures() {
         List<String> l = new ArrayList<String>();
@@ -24,6 +39,8 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         l.add("http://xml.org/sax/features/string-interning");
         l.add("http://xml.org/sax/features/namespace-prefixes");
         l.add("http://xml.org/sax/features/use-entity-resolver2");
+        l.add(FEATURE_CACHE);
+        l.add(FEATURE_CACHE_PUBLICID);
         l.add(FEATURE_THREADS);
         l.add(XMLConstants.FEATURE_SECURE_PROCESSING);
         return Collections.<String>unmodifiableList(l);
@@ -93,17 +110,102 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     private final Map<DTD,DTD> dtdcache = new HashMap<DTD,DTD>();
 
-    InputSource resolveEntity(String publicid, String resolvedSystemId) throws IOException {
+    InputSourceURN resolveEntity(String publicid, String resolvedSystemId, BFOXMLReader xml) throws SAXException, IOException {
         if (resolvedSystemId != null) {
             try {
-                URL url = new URL(resolvedSystemId);
-                InputStream in = url.openStream();
-                if (in instanceof FileInputStream) {
-                    in = new BufferedInputStream(in);
+                final URL furl = new URL(resolvedSystemId);
+                String scheme = furl.getProtocol();
+                String urn = null;
+
+                // Check if we're allowed to access this URL
+                try {
+                    String allowedSchemes = (String)xml.getProperty("http://javax.xml.XMLConstants/property/accessExternalDTD");
+                    if (allowedSchemes == null) {
+                        allowedSchemes = System.getProperty("javax.xml.accessExternalDTD");
+                        if (allowedSchemes == null) {
+                            allowedSchemes = "all";
+                        }
+                    }
+                    if (scheme.equals("https")) {
+                        scheme = "http";
+                    }
+                    if (allowedSchemes.length() == 0) {
+                        xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
+                    } else if (!allowedSchemes.equals("all")) {
+                        List<String> l = Arrays.asList(allowedSchemes.split(","));
+                        if (!l.contains(scheme) && !(scheme.equals("http") && l.contains("https"))) {
+                            xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
+                        }
+                    }
+                } catch (SAXNotRecognizedException e) {
+                    throw new SAXException(e);
                 }
-                InputSource source = new InputSource(in);
+
+                if (scheme.equals("file")) {
+                    // File URLs are permanently identified by their URL and their last modified time
+                    try {
+                        final File file = new File(furl.toURI());
+                        urn = furl + "#lastModified=" + file.lastModified();
+                    } catch (Exception e) {
+                        throw new SAXException(e);
+                    }
+                } else if (scheme.equals("jar")) {
+                    // Jar URLs are permanently identified by their URL - they never change
+                    urn = furl.toString();
+                } else {
+                    // Other URLs need to be checksummed to identify changes
+                    urn = null;
+                }
+
+                // New InputSource that opens the requested stream on demand,
+                // because we're hoping this will not be required due to caching
+                InputSourceURN source = new InputSourceURN() {
+                    @Override public InputStream getByteStream() {
+                        try {
+                            InputStream in = super.getByteStream();
+                            if (in == null) {
+                                URL url = furl;
+                                URLConnection con = url.openConnection();
+                                if (con instanceof HttpURLConnection) {
+                                    // Because Java can't redirect from HTTP to HTTPS
+                                    HttpURLConnection hcon = (HttpURLConnection)con;
+                                    hcon.setRequestProperty("User-Agent", "https://github.com/faceless2/sax on Java/" + System.getProperty("java.version"));
+                                    hcon.setInstanceFollowRedirects(false);
+                                    hcon.connect();
+                                    int count = 0, code;
+                                    while (((code=hcon.getResponseCode()) == 301 || code == 302) && ++count < 8) {
+                                        String location = hcon.getHeaderField("Location");
+                                        if (location == null) {
+                                            throw new IOException("Invalid " + code + "redirect (no Location)");
+                                        }
+                                        URL url2 = new URL(url, location);
+                                        String scheme = url2 == null ? null : url2.getProtocol();
+                                        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+                                            throw new IOException("Invalid " + code + "redirect to \"" + location + "\"");
+                                        } else {
+                                            url = url2;
+                                            hcon.disconnect();
+                                            hcon = (HttpURLConnection)url.openConnection();
+                                            con = hcon;
+                                        }
+                                    }
+                                }
+                                in = con.getInputStream();
+                                if (in instanceof FileInputStream) {
+                                    in = new BufferedInputStream(in);
+                                }
+                                setByteStream(in);
+                            }
+                            return in;
+                        } catch (IOException e) {
+                            // This will be unpacked and thrown on as IOException
+                            throw new RuntimeException(e);
+                        }
+                    }
+                };
                 source.setPublicId(publicid);
                 source.setSystemId(resolvedSystemId);
+                source.setURN(urn);
                 return source;
             } catch  (MalformedURLException e) {
                 throw new IOException("Invalid absolute URL " + BFOXMLReader.fmt(resolvedSystemId));
@@ -146,6 +248,10 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    Cache getCache() {
+        return cache;
     }
 
 }

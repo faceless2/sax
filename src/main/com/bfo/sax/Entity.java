@@ -14,7 +14,7 @@ class Entity {
     static final Entity APOS = createSimple("apos", "'");
     static final Entity QUOT = createSimple("quot", "\"");
 
-    private final String name, value, systemId, publicId;
+    private final String name, value, systemId, publicId, parentSystemId;
     private final int line, column;
 
     /**
@@ -22,7 +22,7 @@ class Entity {
      * @param codepoint the codepoint
      */
     static Entity createCharacter(int codepoint) {
-        return new Entity(null, Character.toString(codepoint), null, null, TYPE_CHARACTER, TYPE_CHARACTER);
+        return new Entity(null, Character.toString(codepoint), null, null, null, TYPE_CHARACTER, TYPE_CHARACTER);
     }
 
     /**
@@ -33,7 +33,7 @@ class Entity {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, null, null, null, TYPE_INVALID, TYPE_INVALID);
+        return new Entity(name, null, null, null, null, TYPE_INVALID, TYPE_INVALID);
     }
 
     /**
@@ -45,7 +45,7 @@ class Entity {
         if (name == null || name.length() == 0 || value == null) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, value, null, null, TYPE_SIMPLE, TYPE_SIMPLE);
+        return new Entity(name, value, null, null, null, TYPE_SIMPLE, TYPE_SIMPLE);
     }
 
     /**
@@ -54,8 +54,8 @@ class Entity {
      * @param publicId the publicID of this DTD
      * @param systemId the systemID of this DTD
      */
-    static Entity createDTD(String name, String publicId, String systemId) {
-        return new Entity(name, null, publicId, systemId, TYPE_DTD, TYPE_DTD);
+    static Entity createDTD(String name, String publicId, String systemId, String parentSystemId) {
+        return new Entity(name, null, publicId, systemId, parentSystemId, TYPE_DTD, TYPE_DTD);
     }
 
     /**
@@ -64,11 +64,11 @@ class Entity {
      * @param publicId the publicID of this Entity
      * @param systemId the systemID of this Entity
      */
-    static Entity createExternal(String name, String publicId, String systemId) {
+    static Entity createExternal(String name, String publicId, String systemId, String parentSystemId) {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, null, publicId, systemId, TYPE_EXTERNAL, TYPE_EXTERNAL);
+        return new Entity(name, null, publicId, systemId, parentSystemId, TYPE_EXTERNAL, TYPE_EXTERNAL);
     }
 
     /**
@@ -90,14 +90,15 @@ class Entity {
         if (column < 0) {
             column = -1;
         }
-        return new Entity(name, value, publicId, systemId, line, column);
+        return new Entity(name, value, publicId, systemId, null, line, column);
     }
 
-    private Entity(String name, String value, String publicId, String systemId, int line, int column) {
+    private Entity(String name, String value, String publicId, String systemId, String parentSystemId, int line, int column) {
         this.name = name;
         this.value = value;
         this.publicId = publicId;
         this.systemId = systemId;
+        this.parentSystemId = parentSystemId;
         this.line = line;
         this.column = column;
     }
@@ -204,6 +205,13 @@ class Entity {
      */
     String getSystemId() {
         return systemId;
+    }
+
+    /**
+     * For dtd or external entities, return the system id, otherwise return null
+     */
+    String getParentSystemId() {
+        return parentSystemId;
     }
 
     /**

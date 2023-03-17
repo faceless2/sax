@@ -11,6 +11,8 @@ class DTD {
     private final String baseurl, publicid, systemid;
     private final Map<String,Entity> entities = new HashMap<String,Entity>();
     private final Map<String,Element> elements = new HashMap<String,Element>();
+    private Map<Entity,String> dependencies;
+    private Map<Entity,InputSourceURN> workingDependencies;
 
     DTD(BFOSAXParserFactory factory, String publicid, String baseurl, String systemid) {
         if (baseurl != null && systemid != null) {
@@ -24,26 +26,7 @@ class DTD {
         this.publicid = publicid;
         this.baseurl = baseurl;         // for any resources referenced from here
         this.systemid = systemid;
-    }
-
-    public int hashCode() {
-        int v = 0;
-        if (publicid != null) {
-            v ^= publicid.hashCode();
-        }
-        if (systemid != null) {
-            v ^= systemid.hashCode();
-        }
-        return v;
-    }
-
-    public boolean equals(Object o) {
-        if (o instanceof DTD) {
-            DTD dtd = (DTD)o;
-            return publicid == null ? dtd.publicid == null : publicid.equals(dtd.publicid) && 
-                   systemid == null ? dtd.systemid == null : systemid.equals(dtd.systemid);
-        }
-        return false;
+        this.workingDependencies = new HashMap<Entity,InputSourceURN>();
     }
 
     public String getPublicId() {
@@ -64,12 +47,18 @@ class DTD {
     }
 
     void addElement(Element element) {
+        if (isClosed()) {
+            throw new IllegalStateException("closed");
+        }
         if (elements.put(element.getName(), element) != null) {
             throw new IllegalArgumentException("Element \"" + element.getName() + "\" already declared");
         }
     }
 
     void addEntity(Entity entity) {
+        if (isClosed()) {
+            throw new IllegalStateException("closed");
+        }
         if (entity.isInvalid() || entity.isCharacter()) {
             throw new IllegalArgumentException();
         }
@@ -84,6 +73,36 @@ class DTD {
 
     Element getElement(String name) {
         return elements.get(name);
+    }
+
+    boolean isClosed() {
+        return workingDependencies == null;
+    }
+
+    Map<Entity,InputSourceURN> getWorkingDependencies() {
+        return workingDependencies;
+    }
+
+    void close() {
+        for (Element elt : elements.values()) {
+            elt.close();
+        }
+        dependencies = new HashMap<Entity,String>();
+        for (Map.Entry<Entity,InputSourceURN> e : workingDependencies.entrySet()) {
+            if (e.getKey().isExternal()) {
+                String urn = e.getValue().getURN();
+                if (urn == null) {
+                    throw new IllegalStateException("URN not calculated for " + e.getKey());
+                }
+                dependencies.put(e.getKey(), urn);
+            }
+        }
+        workingDependencies = null;
+        dependencies = Collections.<Entity,String>unmodifiableMap(dependencies);
+    }
+
+    Map<Entity,String> getDependencies() {
+        return dependencies;
     }
 
 }

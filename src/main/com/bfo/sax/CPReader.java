@@ -251,12 +251,19 @@ abstract class CPReader {
      * Return a new CPReader that reads from the InputSource
      */
     static CPReader getReader(InputSource in) throws IOException, SAXException {
-        if (in.getCharacterStream() != null) {
-            return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId());
-        } else if (in.getByteStream() != null) {
-            return getReader(in.getByteStream(), in.getEncoding(), in.getPublicId(), in.getSystemId());
-        } else {
-            throw new SAXException("InputSource has no streams");
+        try {
+            if (in.getCharacterStream() != null) {
+                return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId());
+            } else if (in.getByteStream() != null) {
+                return getReader(in.getByteStream(), in.getEncoding(), in.getPublicId(), in.getSystemId());
+            } else {
+                throw new SAXException("InputSource has no streams");
+            }
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof IOException) {
+                throw (IOException)e.getCause();
+            }
+            throw e;
         }
     }
 

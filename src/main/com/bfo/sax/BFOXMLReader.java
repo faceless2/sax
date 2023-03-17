@@ -2,6 +2,7 @@ package com.bfo.sax;
 
 import java.io.*;
 import java.util.*;
+import java.util.logging.*;
 import java.util.concurrent.*;
 import java.net.URL;
 import javax.xml.XMLConstants;
@@ -10,6 +11,7 @@ import org.xml.sax.ext.*;
 
 public class BFOXMLReader implements XMLReader, Locator {
 
+    final Logger cachelog = Logger.getLogger("com.bfo.sax.Cache");
     private int c, len;
     private char[] buf;
     private CPReader curreader;
@@ -21,7 +23,9 @@ public class BFOXMLReader implements XMLReader, Locator {
     private boolean featureExternalParameterEntities = true;
     private boolean featureNamespacePrefixes = true;            // TODO
     private boolean featureSecureProcessing = true;             // TODO
-    private String externalPrefixes = "all";                    // TODO
+    private boolean featureCache = true;
+    private boolean featureCachePublicId = true;  // xerces does, so we do
+    private String externalPrefixes = null; // null will check system property
     private Queue q;
     private DTD dtd;
     private ContentHandler contentHandler;
@@ -73,6 +77,10 @@ public class BFOXMLReader implements XMLReader, Locator {
            return featureEntityResolver2;
        } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
            return featureThreads;
+       } else if (BFOSAXParserFactory.FEATURE_CACHE.equals(name)) {
+           return featureCache;
+       } else if (BFOSAXParserFactory.FEATURE_CACHE_PUBLICID.equals(name)) {
+           return featureCachePublicId;
        } else {
            return false;
        }
@@ -100,6 +108,10 @@ public class BFOXMLReader implements XMLReader, Locator {
            featureSecureProcessing = value;
        } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
            featureThreads = value;
+       } else if (BFOSAXParserFactory.FEATURE_CACHE.equals(name)) {
+           featureCache = value;
+       } else if (BFOSAXParserFactory.FEATURE_CACHE_PUBLICID.equals(name)) {
+           featureCachePublicId = value;
        } else {
            throw new SAXNotRecognizedException(name);
        }
@@ -207,7 +219,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         if (in.getCharacterStream() == null && in.getByteStream() == null && in.getSystemId() != null) {
             // Xerces does not call our set handler here.
-            InputSource in2 = factory.resolveEntity(in.getPublicId(), in.getSystemId());
+            InputSource in2 = factory.resolveEntity(in.getPublicId(), in.getSystemId(), this);
             if (in2 != null) {
                 in = in2;
             }
@@ -256,7 +268,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                                 // halt.
                                 tq.fatalError(e);
                             } catch (Exception e) {
-                                tq.fatalError(new SAXParseException("Uncaught Exception", BFOXMLReader.this, e));
+                                // Same for other classes
+                                tq.fatalError2(e);
                             }
                         } catch (Exception e) {
                             // All this does is capture the "echo" exception
@@ -385,7 +398,10 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     // PEReference [Parameter entity references] are recognized anywhere in the DTD (internal and external subsets and external parameter entities), except in literals [EntityValue, AttValue, SystemLiteral, PubidLiteral], processing instructions, comments, and the contents of ignored conditional sections (see 3.4 Conditional Sections). They are also recognized in entity value literals [EntityValue]. The use of parameter entities in the internal subset is restricted as described below.
 
-    String error(final CPReader reader, String msg) throws SAXException, IOException {
+    String error(CPReader reader, String msg) throws SAXException, IOException {
+        if (reader == null) {
+            reader = curreader;
+        }
         throw new SAXParseException(msg, reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
     }
 
@@ -1139,6 +1155,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         readS(reader);
         final String name = readName(reader);
         String pubid = null, sysid = null;
+        String internalSubsetSource = null;
         CPReader internalSubset = null;
         if (isS(c)) {
             readS(reader);
@@ -1217,7 +1234,8 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (c != ']') {
                 error(reader, "Bad token " + hex(c));
             }
-            internalSubset = CPReader.getReader(sb.toString(), reader.getPublicId(), reader.getSystemId(), line, col, reader.isXML11());
+            internalSubsetSource = sb.toString();
+            internalSubset = CPReader.getReader(internalSubsetSource, reader.getPublicId(), reader.getSystemId(), line, col, reader.isXML11());
             c = reader.read();
             if (isS(c)) {
                 readS(reader);
@@ -1227,42 +1245,152 @@ public class BFOXMLReader implements XMLReader, Locator {
             error(reader, "Bad token " + hex(c));
         }
         dtd = new DTD(factory, pubid, reader.getSystemId(), sysid);
-        Entity dtdentity = Entity.createDTD(name, pubid, sysid);
+        Entity dtdentity = Entity.createDTD(name, pubid, sysid, reader.getSystemId());
         CPReader dtdreader = null;
+        // Xerces does (if appropriate)
+        //   getExternalSubset
+        //   startDTD
+        //   parseInternalSubset
+        //   resolveExternal
+        //   parseExternal
+        // To cache we must do
+        //   getExternalSubset
+        //   resolveExternal
+        //   startDTD
+        //   parseInternalSubset
+        //   parseExternalSubset
+        //
+        // Xerces caching policy (in XMLDTDDescription.java) is:
+        //  compare name; compare publicid if set; compare resolved systemid.
+        // name isn't used anywhere though.
+        // 
         if (pubid == null && sysid == null) {
-            // First, to match Xerces
+            // First, to match Xerces - this calls getExternalSubset
             dtdreader = getEntityReader(reader, dtdentity);
         }
-        if (q.isLexicalHandler()) {
-            q.startDTD(name, pubid, sysid);
-        }
-        if (internalSubset != null) {
-            CPReader tmp = curreader;
-            curreader = internalSubset;
-            internalSubset = new PEReferenceExpandingCPReader(internalSubset);
-            readInternalSubset(internalSubset);
-            curreader = tmp;
-            internalSubset.close();
-        }
-        if (pubid != null || sysid != null) {
-            dtdreader = getEntityReader(reader, dtdentity);
-        }
-        if (dtdreader != null) {
-            if (q.isLexicalHandler()) {
-                q.startEntity("[dtd]");
+        String dtdurn = null;
+        if (factory.getCache() != null && featureCache) {
+            DTD cacheddtd = null;
+            if (featureCachePublicId && dtd.getPublicId() != null) {
+                // If the DTD has a public ID and the feature set says public Ids never change,
+                // check the cache for this public ID. If there, don't revalidate.
+                dtdurn = "urn:xml:" + dtd.getPublicId();
+                cacheddtd = factory.getCache().getDTD(dtdurn, reader.isXML11());
+                if (cachelog.isLoggable(Level.FINE)) {
+                    cachelog.fine("Cache get(" + dtdurn + ") " + cacheddtd);
+                }
             }
-            CPReader tmp = curreader;
-            curreader = dtdreader;
-            dtdreader = new PEReferenceExpandingCPReader(dtdreader);
-            readExternalSubset(dtdreader, true);
-            curreader = tmp;
-            dtdreader.close();
-            if (q.isLexicalHandler()) {
-                q.endEntity("[dtd]");
+            InputSourceURN source = null;
+            if (cacheddtd == null) {
+                source = (InputSourceURN)getExternalEntityInputSource(reader, dtdentity);
+                if (source != null) {
+                    dtdurn = source.getURN();
+                    if (internalSubset != null) {
+                        MurmurHash3 hash = new MurmurHash3();
+                        hash.update(internalSubsetSource.getBytes("UTF-8"));
+                        dtdurn += ":" + hash.getValue128().toString(16);
+                    }
+                    cacheddtd = factory.getCache().getDTD(dtdurn, reader.isXML11());
+                    if (cachelog.isLoggable(Level.FINE)) {
+                        cachelog.fine("Cache get(" + dtdurn + ") " + cacheddtd);
+                    }
+                    // When loading an InputSource the only input parameters are
+                    // [entityPublicId,parentSystemID,entitySystemId]
+                    if (cacheddtd != null) {
+                        // We have a cached DTD that matches the URN of the InputSource
+                        // we've just loaded. Now we have to check all the dependencies
+                        // referenced by that cached DTD to ensure they haven't changed.
+                        // If any have, the cached DTD is invalid.
+                        // We'll be resolving entities as part of this process; if the
+                        // cached DTD is invalid, those entities shouldn't be reloaded
+                        int ecount = 0;
+                        for (Map.Entry<Entity,String> e : cacheddtd.getDependencies().entrySet()) {
+                            final Entity entity = e.getKey();
+                            final String suburn = e.getValue();
+                            if (entity.isExternal()) {
+                                InputSourceURN subsource = (InputSourceURN)getExternalEntityInputSource(reader, entity);
+                                if (subsource != null) {
+                                    String newurn = subsource.getURN();
+                                    if (newurn == null) {
+                                        newurn = subsource.setURNFromContent();
+                                    }
+                                    if (!suburn.equals(newurn)) {
+                                        if (cachelog.isLoggable(Level.FINE)) {
+                                            cachelog.fine("Cache entity " + subsource + " URN mismatch: want " + suburn + " found " + newurn);
+                                        }
+                                        cacheddtd = null;
+                                        break;
+                                    } else {
+                                        if (cachelog.isLoggable(Level.FINE)) {
+                                            cachelog.fine("Cache entity " + subsource + " URN match: want " + suburn);
+                                        }
+                                    }
+                                }
+                            }
+                            ecount++;
+                        }
+                    }
+                } else {
+                    error(reader, "Can't load DTD \"" + dtdentity + "\"");
+                }
+            }
+            if (cacheddtd != null) {
+                if (cachelog.isLoggable(Level.FINE)) {
+                    cachelog.fine("Cache match");
+                }
+                dtd = cacheddtd;
+            } else if (source != null) {
+                dtdreader = CPReader.normalize(CPReader.getReader(source), reader.isXML11());
             }
         }
-        if (q.isLexicalHandler()) {
-            q.endDTD();
+        if (dtdreader == null) {
+            dtd = null;
+        } else if (!dtd.isClosed()) {
+            if (q.isLexicalHandler()) {
+                q.startDTD(name, pubid, sysid);
+            }
+            if (internalSubset != null) {
+                CPReader tmp = curreader;
+                curreader = internalSubset;
+                internalSubset = new PEReferenceExpandingCPReader(internalSubset);
+                readInternalSubset(internalSubset);
+                curreader = tmp;
+                internalSubset.close();
+            }
+            if (dtdreader == null && pubid != null || sysid != null) {
+                dtdreader = getEntityReader(reader, dtdentity);
+            }
+            if (dtdreader != null) {
+                if (q.isLexicalHandler()) {
+                    q.startEntity("[dtd]");
+                }
+                CPReader tmp = curreader;
+                curreader = dtdreader;
+                dtdreader = new PEReferenceExpandingCPReader(dtdreader);
+                readExternalSubset(dtdreader, true);
+                curreader = tmp;
+                dtdreader.close();
+                if (q.isLexicalHandler()) {
+                    q.endEntity("[dtd]");
+                }
+            }
+            if (q.isLexicalHandler()) {
+                q.endDTD();
+            }
+            dtd.close();
+            if (factory.getCache() != null && featureCache) {
+                if (cachelog.isLoggable(Level.FINE)) {
+                    cachelog.fine("Cache put(" + dtdurn + ") " + dtd);
+                }
+                factory.getCache().putDTD(dtdurn, reader.isXML11(), dtd);
+                if (featureCachePublicId && dtd.getPublicId() != null) {
+                    dtdurn = "urn:xml:" + dtd.getPublicId();
+                    factory.getCache().putDTD(dtdurn, reader.isXML11(), dtd);
+                    if (cachelog.isLoggable(Level.FINE)) {
+                        cachelog.fine("Cache put(" + dtdurn + ") " + dtd);
+                    }
+                }
+            }
         }
     }
 
@@ -1453,7 +1581,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 if (q.isDeclHandler()) {
                     q.externalEntityDecl(name, pubid, r);
                 }
-                Entity entity = Entity.createExternal(name, pubid, sysid);
+                Entity entity = Entity.createExternal(name, pubid, sysid, reader.getSystemId());
                 dtd.addEntity(entity);
             }
         }
@@ -2301,47 +2429,65 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
     
     private CPReader getEntityReader(final CPReader reader, final Entity entity) throws SAXException, IOException {
-        final String parentSystemId = reader.getSystemId();
         final boolean xml11 = reader.isXML11();
+        if (entity.getValue() != null) {
+            return CPReader.getReader(entity.getValue(), entity.getPublicId(), entity.getSystemId(), entity.getLineNumber(), entity.getColumnNumber(), xml11);
+        }
+        InputSource source = getExternalEntityInputSource(reader, entity);
+        if (source != null) {
+            return CPReader.normalize(CPReader.getReader(source), xml11);
+        } else {
+            return null;
+        }
+    }
+
+    private InputSource getExternalEntityInputSource(final CPReader reader, final Entity entity) throws SAXException, IOException {
         final String publicId = entity.getPublicId();
         final String systemId = entity.getSystemId();
+        final String parentSystemId = entity.getParentSystemId();
 
-        if (entity.getValue() != null) {
-            return CPReader.getReader(entity.getValue(), publicId, systemId, entity.getLineNumber(), entity.getColumnNumber(), xml11);
+        InputSource source = null;
+        final String resolvedSystemId = factory.resolve(parentSystemId, systemId);
+
+        // Stage 1: ask EntityResolver
+        if (publicId == null && systemId == null) {
+            if (entity.isDTD() && q.isEntityResolver2()) {
+                source = q.getExternalSubset(entity.getName(), parentSystemId);
+            }
         } else {
-            InputSource source = null;
-            final String resolvedSystemId = factory.resolve(parentSystemId, systemId);
-
-            // Stage 1: ask EntityResolver
-            if (publicId == null && systemId == null) {
-                if (entity.isDTD() && q.isEntityResolver2()) {
-                    source = q.getExternalSubset(entity.getName(), parentSystemId);
-                }
-            } else {
-                if (q.isEntityResolver2()) {
-                    source = q.resolveEntity(factory.xercescompat ? null : entity.getName(), publicId, parentSystemId, systemId != null ? systemId : "");
-                } else if (q.isEntityResolver()) {
-                    source = q.resolveEntity(publicId, resolvedSystemId != null ? resolvedSystemId : "");
-                }
-            }
-
-            // Stage 2: ask Factory
-            if (source == null) {
-                // We have to ask the factory, so do security checks here
-                if (entity.isParameter() && !featureExternalParameterEntities) {
-                    error(reader, "External parameter entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
-                } else if (entity.isGeneral() && !featureExternalGeneralEntities) {
-                    error(reader, "External general entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
-                }
-                source = factory.resolveEntity(publicId, resolvedSystemId);
-            }
-
-            if (source != null) {
-                return CPReader.normalize(CPReader.getReader(source), xml11);
-            } else {
-                return null;
+            if (q.isEntityResolver2()) {
+                // Xerces/JVM does not pass the name through here
+                // Xerces/Latest does
+                source = q.resolveEntity(factory.xercescompat ? null : entity.getName(), publicId, parentSystemId, systemId != null ? systemId : "");
+            } else if (q.isEntityResolver()) {
+                source = q.resolveEntity(publicId, resolvedSystemId != null ? resolvedSystemId : "");
             }
         }
+
+        // Stage 2: ask Factory
+        if (source == null) {
+            // We have to ask the factory, so do security checks here
+            if (entity.isParameter() && !featureExternalParameterEntities) {
+                error(reader, "External parameter entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+            } else if (entity.isGeneral() && !featureExternalGeneralEntities) {
+                error(reader, "External general entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
+            }
+            source = factory.resolveEntity(publicId, resolvedSystemId, this);
+        }
+
+        if (dtd != null && !dtd.isClosed() && factory.getCache() != null) {
+            // If we are using a cache, then we have to have a URN for each InputSource.
+            if (source != null) {
+                if (source != null && !(source instanceof InputSourceURN)) {
+                    source = new InputSourceURN(source, null);
+                }
+                if (((InputSourceURN)source).getURN() == null) {
+                    ((InputSourceURN)source).setURNFromContent();
+                }
+            }
+            dtd.getWorkingDependencies().put(entity, (InputSourceURN)source);
+        }
+        return source;
     }
 
     /**

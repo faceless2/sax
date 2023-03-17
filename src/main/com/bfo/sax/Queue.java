@@ -2,6 +2,7 @@ package com.bfo.sax;
 
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
+import java.io.IOException;
 
 abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, ErrorHandler, EntityResolver2, DeclHandler, Locator {
     final ContentHandler contentHandler;
@@ -40,6 +41,7 @@ abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, Erro
     final boolean isEntityResolver2() {
        return entityResolver instanceof EntityResolver2;
     }
+    abstract void fatalError2(Exception e) throws IOException, SAXException;
     /**
      * Is is safe to reuse buffers?
      */

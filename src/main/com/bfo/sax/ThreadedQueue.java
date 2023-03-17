@@ -138,6 +138,10 @@ class ThreadedQueue extends Queue {
         now(MsgType.fatalError, a1);
         throw a1;       // Won't get this far, because fail will be set.
     }
+    @Override public void fatalError2(Exception a1) throws IOException, SAXException {
+        now(MsgType.fatalError, a1);
+        throw new SAXException("Unhandled Exception", a1);       // Won't get this far, because fail will be set.
+    }
     @Override public void setDocumentLocator(Locator locator) {
         this.locator = locator;
         publicId = locator.getPublicId();
@@ -390,10 +394,19 @@ class ThreadedQueue extends Queue {
                         break;
                     case fatalError:
                         exchange = true;        // reply is null but this ensures other thread waits for any exception
-                        if (errorHandler != null) {
+                        if (errorHandler != null && o[0] instanceof SAXParseException) {
                             errorHandler.fatalError((SAXParseException)o[0]);
                         }
-                        throw (SAXParseException)o[0];  // fatalError must fail
+                        // fatalError must fail
+                        if (o[0] instanceof SAXException) {
+                            throw (SAXException)o[0];
+                        } else if (o[0] instanceof IOException) {
+                            throw (IOException)o[0];
+                        } else if (o[0] instanceof RuntimeException) {
+                            throw (RuntimeException)o[0];
+                        } else {
+                            throw new SAXException("Unhandled Exception", (Exception)o[0]);
+                        }
                     case getExternalSubset:
                         exchange = true;
                         output = ((EntityResolver2)entityResolver).getExternalSubset((String)o[0], (String)o[1]);
