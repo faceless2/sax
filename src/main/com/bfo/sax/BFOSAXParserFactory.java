@@ -39,6 +39,8 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         l.add("http://xml.org/sax/features/string-interning");
         l.add("http://xml.org/sax/features/namespace-prefixes");
         l.add("http://xml.org/sax/features/use-entity-resolver2");
+        l.add("http://apache.org/xml/features/nonvalidating/load-external-dtd");
+        l.add("http://apache.org/xml/features/disallow-doctype-dec");
         l.add(FEATURE_CACHE);
         l.add(FEATURE_CACHE_PUBLICID);
         l.add(FEATURE_THREADS);
@@ -263,6 +265,31 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     Cache getCache() {
         return cache;
+    }
+
+    String message(Locale locale, Object... msg) {
+        ResourceBundle bundle = ResourceBundle.getBundle("com.bfo.sax.data.Messages", locale);
+        String message = (String)msg[0];
+        try {
+            if (bundle.containsKey(message)) {
+                String template = bundle.getString(message);
+                boolean found = true;
+                for (int i=1;i<msg.length && found;i++) {
+                    found = false;
+                    int j;
+                    while ((j=template.indexOf("{" + (i - 1) + "}")) >= 0) {
+                        Object t = msg[i];
+                        if (t instanceof Integer) {
+                            t = Integer.toHexString((Integer)t);
+                        }
+                        template = template.substring(0, j) + t + template.substring(j + 3);
+                        found = true;
+                    }
+                }
+                message = template;
+            }
+        } catch (Exception e) {}
+        return message;
     }
 
 }

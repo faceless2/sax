@@ -8,33 +8,38 @@ import org.xml.sax.ext.*;
 class DTD {
 
     private final BFOSAXParserFactory factory;
-    private final String baseurl, publicid, systemid;
+    private final String baseurl, publicId, systemId, name;
     private final Map<String,Entity> entities = new HashMap<String,Entity>();
     private final Map<String,Element> elements = new HashMap<String,Element>();
     private Map<Entity,String> dependencies;
     private Map<Entity,InputSourceURN> workingDependencies;
 
-    DTD(BFOSAXParserFactory factory, String publicid, String baseurl, String systemid) {
-        if (baseurl != null && systemid != null) {
+    DTD(BFOSAXParserFactory factory, String name, String publicId, String baseurl, String systemId) {
+        if (baseurl != null && systemId != null) {
             try {
-                baseurl = new URL(new URL(baseurl), systemid).toString();
+                baseurl = new URL(new URL(baseurl), systemId).toString();
             } catch (Exception e) {}
-        } else if (systemid != null) {
-            baseurl = systemid;
+        } else if (systemId != null) {
+            baseurl = systemId;
         }
         this.factory = factory;
-        this.publicid = publicid;
+        this.name = name;
+        this.publicId = publicId;
         this.baseurl = baseurl;         // for any resources referenced from here
-        this.systemid = systemid;
+        this.systemId = systemId;
         this.workingDependencies = new HashMap<Entity,InputSourceURN>();
     }
 
+    public String getName() {
+        return name;
+    }
+
     public String getPublicId() {
-        return publicid;
+        return publicId;
     }
 
     public String getSystemId() {
-        return systemid;
+        return systemId;
     }
 
     void attributeDecl(String eName, String aName, String type, String mode, String value) {

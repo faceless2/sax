@@ -156,7 +156,16 @@ class ThreadedQueue extends Queue {
 
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("{count:"+count+", list:[");
+        sb.append("{\"publicid\":");
+        sb.append(BFOXMLReader.fmt(getPublicId()));
+        sb.append(",\"systemid\":");
+        sb.append(BFOXMLReader.fmt(getSystemId()));
+        sb.append(",\"line\":");
+        sb.append(getLineNumber());
+        sb.append(",\"column\":");
+        sb.append(getColumnNumber());
+        sb.append(",\"class\":\"com.bfo.sax.ThreadedQueue\",\"queued\":"+count+"}");
+        /*
         for (int i=0;i<count;i++) {
             Object o = q[(takeIndex + i) % q.length];
             if (i > 0) {
@@ -171,6 +180,7 @@ class ThreadedQueue extends Queue {
             }
         }
         sb.append("]}");
+        */
         return sb.toString();
     }
 
