@@ -206,6 +206,17 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                 source.setPublicId(publicid);
                 source.setSystemId(resolvedSystemId);
                 source.setURN(urn);
+                if (urn == null) {
+                    // Unpack immediately
+                    try {
+                        source.getByteStream();
+                    } catch (RuntimeException e) {
+                        if (e.getCause() instanceof IOException) {
+                            throw (IOException)e.getCause();
+                        }
+                        throw e;
+                    }
+                }
                 return source;
             } catch  (MalformedURLException e) {
                 throw new IOException("Invalid absolute URL " + BFOXMLReader.fmt(resolvedSystemId));

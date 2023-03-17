@@ -1330,8 +1330,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                             ecount++;
                         }
                     }
-                } else {
-                    error(reader, "Can't load DTD \"" + dtdentity + "\"");
                 }
             }
             if (cacheddtd != null) {
@@ -1343,9 +1341,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 dtdreader = CPReader.normalize(CPReader.getReader(source), reader.isXML11());
             }
         }
-        if (dtdreader == null) {
-            dtd = null;
-        } else if (!dtd.isClosed()) {
+        if (!dtd.isClosed()) {
             if (q.isLexicalHandler()) {
                 q.startDTD(name, pubid, sysid);
             }

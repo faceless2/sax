@@ -17,7 +17,7 @@ public class Test {
 
     private static SAXParserFactory newfactory, oldfactory;
 
-    private boolean newparser, oldparser, decl, lexical, speed, quiet, large, number, progress;
+    private boolean newparser, oldparser, decl, lexical, entity, dtd, speed, quiet, large, number, progress;
     private Boolean valid;              // expectation or null for none
 
     @SuppressWarnings("unchecked")
@@ -246,8 +246,12 @@ public class Test {
             r.setProperty("http://xml.org/sax/properties/lexical-handler", handler);
         }
         r.setErrorHandler(handler);
-        r.setDTDHandler(handler);
-        r.setEntityResolver(handler);
+        if (dtd) {
+            r.setDTDHandler(handler);
+        }
+        if (entity) {
+            r.setEntityResolver(handler);
+        }
         InputSource in = new InputSource(new BufferedInputStream(new FileInputStream(file)));
         in.setSystemId(file);
         r.parse(in);
@@ -596,9 +600,10 @@ public class Test {
             args.addAll(l);
         }
 
-        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false, progress = false;
+        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false, progress = false, dtd = false, entity = false;
         Boolean valid = null;
 
+        final long start = System.currentTimeMillis();
         for (int i=0;i<args.size();i++) {
             String arg = args.get(i);
             if (arg.equals("--old")) {
@@ -617,6 +622,10 @@ public class Test {
                 decl = true;
             } else if (arg.equals("--lexical")) {
                 lexical = true;
+            } else if (arg.equals("--dtd")) {
+                dtd = true;
+            } else if (arg.equals("--entity")) {
+                entity = true;
             } else if (arg.equals("--speed")) {
                 speed = true;
             } else if (arg.equals("--progress")) {
@@ -633,6 +642,14 @@ public class Test {
                 valid = null;
             } else if (arg.equals("--quiet")) {
                 quiet = true;
+            } else if (arg.equals("--cache")) {
+                newfactory.setFeature("http://bfo.com/sax/features/cache", true);
+            } else if (arg.equals("--nocache")) {
+                newfactory.setFeature("http://bfo.com/sax/features/cache", false);
+            } else if (arg.equals("--cache-publicid")) {
+                newfactory.setFeature("http://bfo.com/sax/features/cache-publicid", true);
+            } else if (arg.equals("--nocache-publicid")) {
+                newfactory.setFeature("http://bfo.com/sax/features/cache-publicid", false);
             } else if (arg.equals("--threads")) {
                 newfactory.setFeature("http://bfo.com/sax/features/threads", true);
             } else if (arg.equals("--nothreads")) {
@@ -647,6 +664,9 @@ public class Test {
                 test.oldparser = oldparser;
                 test.decl = decl;
                 test.lexical = lexical;
+                test.entity = entity;
+                test.dtd = dtd;
+                test.lexical = lexical;
                 test.speed = speed;
                 test.progress = progress;
                 test.quiet = quiet;
@@ -657,6 +677,7 @@ public class Test {
                 test.run(arg);
             }
         }
+        System.out.println("Done in "+(System.currentTimeMillis() - start)+"ms");
     }
 
 }
