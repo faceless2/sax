@@ -1271,7 +1271,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         String dtdurn = null;
         if (factory.getCache() != null && featureCache) {
             DTD cacheddtd = null;
-            if (featureCachePublicId && dtd.getPublicId() != null) {
+            if (featureCachePublicId && dtd.getPublicId() != null && internalSubset == null) {
                 // If the DTD has a public ID and the feature set says public Ids never change,
                 // check the cache for this public ID. If there, don't revalidate.
                 dtdurn = "urn:xml:" + dtd.getPublicId();
@@ -1379,7 +1379,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     cachelog.fine("Cache put(" + dtdurn + ") " + dtd);
                 }
                 factory.getCache().putDTD(dtdurn, reader.isXML11(), dtd);
-                if (featureCachePublicId && dtd.getPublicId() != null) {
+                if (featureCachePublicId && dtd.getPublicId() != null && internalSubset == null) {
                     dtdurn = "urn:xml:" + dtd.getPublicId();
                     factory.getCache().putDTD(dtdurn, reader.isXML11(), dtd);
                     if (cachelog.isLoggable(Level.FINE)) {
