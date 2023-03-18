@@ -28,6 +28,8 @@ public class BFOXMLReader implements XMLReader, Locator {
     private boolean featureCachePublicId = true;  // xerces does, so we do
     private boolean featureDisallowDoctype = false;
     private String externalPrefixes = null; // null will check system property
+    private int parameterEntityExpansionCount, maxParameterEntityExpansionCount;
+    private int generalEntityExpansionCount, maxGeneralEntityExpansionCount;
     private Queue q;
     private DTD dtd;
     private ContentHandler contentHandler;
@@ -39,7 +41,6 @@ public class BFOXMLReader implements XMLReader, Locator {
     private List<Context> stack = new ArrayList<Context>();
     private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
-    private ThreadPoolExecutor threadPool = null;
     private Locale locale = Locale.getDefault();
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
@@ -116,6 +117,9 @@ public class BFOXMLReader implements XMLReader, Locator {
        } else if ("http://apache.org/xml/features/disallow-doctype-dec".equals(name)) {
            featureDisallowDoctype = value;
        } else if (XMLConstants.FEATURE_SECURE_PROCESSING.equals(name)) {
+           // What to do with this? Lets
+           //  * limit entities to 1000/10000
+           //  * limit timeout to 10s for external loads
            featureSecureProcessing = value;
        } else if (BFOSAXParserFactory.FEATURE_THREADS.equals(name)) {
            featureThreads = value;
@@ -230,6 +234,13 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (q != null) {
             throw new IllegalStateException("Parsing");
         }
+        if (featureSecureProcessing) {
+            maxParameterEntityExpansionCount = 1000;
+            maxGeneralEntityExpansionCount = 1000;
+        } else {
+            maxParameterEntityExpansionCount = 10000;
+            maxGeneralEntityExpansionCount = 100000;
+        }
         if (in.getSystemId() != null) {
             String systemId = factory.resolve("", in.getSystemId());
             if (!systemId.equals(in.getSystemId())) {
@@ -261,6 +272,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
 
         try {
+            parameterEntityExpansionCount = generalEntityExpansionCount = 0;
             buf = new char[2048];
             c = len = 0;
             if (featureThreads) {
@@ -299,11 +311,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                         }
                     }
                 };
-                if (threadPool == null) {
+                if (factory.executorService == null) {
                     new Thread(r).start();
                 } else {
                     try {
-                        threadPool.submit(r).get();
+                        factory.executorService.submit(r).get();
                     } catch (ExecutionException e) {
                         throw new RuntimeException(e);
                     } catch (InterruptedException e) {
@@ -340,7 +352,6 @@ public class BFOXMLReader implements XMLReader, Locator {
             entityStack.clear();
         }
     }
-
 
     private static class Context {
         String name;
@@ -423,7 +434,7 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     // PEReference [Parameter entity references] are recognized anywhere in the DTD (internal and external subsets and external parameter entities), except in literals [EntityValue, AttValue, SystemLiteral, PubidLiteral], processing instructions, comments, and the contents of ignored conditional sections (see 3.4 Conditional Sections). They are also recognized in entity value literals [EntityValue]. The use of parameter entities in the internal subset is restricted as described below.
 
-    String error(CPReader reader, Object... msg) throws SAXException, IOException {
+    String error(CPReader reader, String... msg) throws SAXException, IOException {
         if (reader == null) {
             reader = curreader;
         }
@@ -950,13 +961,15 @@ public class BFOXMLReader implements XMLReader, Locator {
                             append('&');
                             append(entity.getName());
                             append(';');
+                        } else if (entity.isSimple() || entity.isCharacter()) {
+                            append(entity.getValue());
                         } else if (entity.isExternal()) {
                             error(reader, "ReferenceToExternalEntity", entity.getName());
-                        } else if (entity.isSimple()) {
-                            append(entity.getValue());
                         } else {
                             if (entityStack.contains(entity)) {
                                 error(reader, "RecursiveGeneralReference", entity.getName(), entityStack.get(entityStack.size() - 1).getName());
+                            } else if (++generalEntityExpansionCount > maxGeneralEntityExpansionCount) {
+                                error(reader, "EntityExpansionLimitExceeded", Integer.toString(maxGeneralEntityExpansionCount));
                             } else {
                                 entityStack.add(entity);
                                 CPReader entityReader = getEntityReader(reader, entity);
@@ -1037,7 +1050,7 @@ public class BFOXMLReader implements XMLReader, Locator {
      */
     private void readCDATA(final CPReader reader) throws SAXException, IOException {
         if (c != '[') {
-            error(reader, "InvalidCharInCDSect", c);
+            error(reader, "InvalidCharInCDSect", Integer.toHexString(c));
         }
         if (q.isLexicalHandler()) {
             q.startCDATA();
@@ -1457,7 +1470,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "Bad token < " + hex(c));
                 }
             } else if (!isS(c)) {
-                error(reader, "InvalidCharInInternalSubset", c);
+                error(reader, "InvalidCharInInternalSubset", Integer.toHexString(c));
             }
             c = reader.read();
         }
@@ -1522,7 +1535,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "Bad token < " + hex(c));
                 }
             } else if (!isS(c)) {
-                error(reader, "InvalidCharInInternalSubset", c);
+                error(reader, "InvalidCharInInternalSubset", Integer.toHexString(c));
             }
             c = reader.read();
         }
@@ -1554,7 +1567,13 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (q.isDeclHandler()) {
                 q.internalEntityDecl(name, value);
             }
-            Entity entity = Entity.createInternal(name, value, reader.getPublicId(), reader.getSystemId(), line, col);
+            Entity entity;
+            if (value.length() == 1 || (value.length() == 2 && value.codePointAt(0) > 0xffff)) {
+                // for eg nbsp, this will be quicker, and won't risk hitting limits
+                entity = Entity.createSimple(name, value);
+            } else {
+                entity = Entity.createInternal(name, value, reader.getPublicId(), reader.getSystemId(), line, col);
+            }
             dtd.addEntity(entity);
             c = reader.read();
             if (isS(c)) {
@@ -1942,7 +1961,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
         } else {
-            error(reader, "ETagUnterminated", qName, c);
+            error(reader, "ETagUnterminated", qName, Integer.toHexString(c));
         }
     }
 
@@ -2401,6 +2420,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                     } else {
                         if (entityStack.contains(entity)) {
                             error(reader, "RecursiveGeneralReference", entity.getName(), entityStack.get(entityStack.size() - 1).getName());
+                        } else if (++generalEntityExpansionCount > maxGeneralEntityExpansionCount) {
+                            error(reader, "EntityExpansionLimitExceeded", Integer.toString(maxGeneralEntityExpansionCount));
                         } else {
                             entityStack.add(entity);
                             CPReader entityReader = getEntityReader(reader, entity);
@@ -2589,6 +2610,8 @@ public class BFOXMLReader implements XMLReader, Locator {
                     }
                     if (entityStack.contains(entity)) {
                         error(reader, "RecursivePEReference", entity.getName(), entityStack.get(entityStack.size() - 1).getName());
+                    } else if (++parameterEntityExpansionCount > maxParameterEntityExpansionCount) {
+                        error(reader, "EntityExpansionLimitExceeded", Integer.toString(maxParameterEntityExpansionCount));
                     } else {
                         if (q.isLexicalHandler()) {
                         //    q.startEntity("%" + entity.getName());

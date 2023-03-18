@@ -5,14 +5,24 @@ import javax.xml.validation.Schema;
 import org.xml.sax.*;
 import javax.xml.XMLConstants;
 import java.util.*;
+import java.util.concurrent.*;
 import java.net.*;
 import java.io.*;
 
+/**
+ * <p>
+ * The <code>BFOSAXParserFactory</code> is the entry point for this package.
+ * Generally it is created with <code>SAXParserFactory.newInstance()</code>.
+ * </p>
+ */
 public class BFOSAXParserFactory extends SAXParserFactory {
 
     private final BFOXMLReader FEATUREHOLDER = new BFOXMLReader(this);
     boolean xercescompat = true;
-    private Cache cache = new Cache();
+    private Cache cache = new Cache(this);
+    private Map<String,String> publicIdMap = Collections.<String,String>synchronizedMap(new HashMap<String,String>());
+    int dtdCacheSize = 50, entityCacheSize = 50;
+    ExecutorService executorService;
 
     /**
      * This feature determines whether parsing takes place in a secondary thread. The default is true
@@ -30,6 +40,9 @@ public class BFOSAXParserFactory extends SAXParserFactory {
     public static final String FEATURE_CACHE_PUBLICID = "http://bfo.com/sax/features/cache-publicid";
 
 
+    /**
+     * Return the list of features that are recognised by this factory
+     */
     public List<String> getSupportedFeatures() {
         List<String> l = new ArrayList<String>();
         l.add("http://xml.org/sax/features/namespaces");
@@ -48,6 +61,9 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         return Collections.<String>unmodifiableList(l);
     }
 
+    /**
+     * Return the list of properties that are recognised by this factory
+     */
     public List<String> getSupportedProperties() {
         List<String> l = new ArrayList<String>();
         l.add("http://xml.org/sax/properties/lexical-handler");
@@ -112,7 +128,11 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     private final Map<DTD,DTD> dtdcache = new HashMap<DTD,DTD>();
 
-    InputSourceURN resolveEntity(String publicid, String resolvedSystemId, BFOXMLReader xml) throws SAXException, IOException {
+    InputSourceURN resolveEntity(String publicId, String resolvedSystemId, BFOXMLReader xml) throws SAXException, IOException {
+        String s = publicIdMap.get(publicId);
+        if (s != null) {
+            resolvedSystemId = s;
+        }
         if (resolvedSystemId != null) {
             try {
                 final URL furl = new URL(resolvedSystemId);
@@ -125,7 +145,11 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                     if (allowedSchemes == null) {
                         allowedSchemes = System.getProperty("javax.xml.accessExternalDTD");
                         if (allowedSchemes == null) {
-                            allowedSchemes = "all";
+                            if (xml.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING)) {
+                                allowedSchemes = "";
+                            } else {
+                                allowedSchemes = "all";
+                            }
                         }
                     }
                     if (scheme.equals("https")) {
@@ -205,7 +229,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                         }
                     }
                 };
-                source.setPublicId(publicid);
+                source.setPublicId(publicId);
                 source.setSystemId(resolvedSystemId);
                 source.setURN(urn);
                 if (urn == null) {
@@ -267,7 +291,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         return cache;
     }
 
-    String message(Locale locale, Object... msg) {
+    String message(Locale locale, String... msg) {
         ResourceBundle bundle = ResourceBundle.getBundle("com.bfo.sax.data.Messages", locale);
         String message = (String)msg[0];
         try {
@@ -279,9 +303,6 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                     int j;
                     while ((j=template.indexOf("{" + (i - 1) + "}")) >= 0) {
                         Object t = msg[i];
-                        if (t instanceof Integer) {
-                            t = Integer.toHexString((Integer)t);
-                        }
                         template = template.substring(0, j) + t + template.substring(j + 3);
                         found = true;
                     }
@@ -290,6 +311,40 @@ public class BFOSAXParserFactory extends SAXParserFactory {
             }
         } catch (Exception e) {}
         return message;
+    }
+
+    /**
+     * Return a Mapping of Public IDs to URLs. Any requests for entities with a
+     * Public ID from this map will be redirected to the corresponding URL, and
+     * the specified System Id will be ignored.
+     * If the URL cannot be resolved, an error will be thrown.
+     */
+    public Map<String,String> getPublicIdMap() {
+        return publicIdMap;
+    }
+
+    /**
+     * Set the {@link ExecutorService} which XML parsing threads should run,
+     * or <code>null</code> to simply create Threads as needed
+     */
+    public void setExecutorService(ExecutorService service) {
+        this.executorService = service;
+    }
+
+    /**
+     * Set the size of the DTD Cache. The default value is 50. The minimum size is 5
+     * @param cache size the cache size
+     */
+    public void setDTDCacheSize(int size) {
+        this.dtdCacheSize = Math.max(5, size);
+    }
+
+    /**
+     * Set the size of the External Entity Cache. The default value is 50. The minimum size is 5
+     * @param cache size the cache size
+     */
+    public void setEntityCacheSize(int size) {
+        this.entityCacheSize = Math.max(5, size);
     }
 
 }
