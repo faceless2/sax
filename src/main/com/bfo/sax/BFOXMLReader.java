@@ -23,7 +23,8 @@ public class BFOXMLReader implements XMLReader, Locator {
     private boolean featureExternalGeneralEntities = true;
     private boolean featureExternalParameterEntities = true;
     private boolean featureNamespacePrefixes = true;            // xerces defaults to true
-    private boolean featureSecureProcessing = true;             // TODO
+    private boolean featureSecureProcessing = false;
+    private boolean featureInternStrings = false;
     private boolean featureCache = true;
     private boolean featureCachePublicId = true;  // xerces does, so we do
     private boolean featureDisallowDoctype = false;
@@ -42,6 +43,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private List<Entity> entityStack = new ArrayList<Entity>();
     private BFOSAXParserFactory factory;
     private Locale locale = Locale.getDefault();
+    private Map<String,String> internMap = new HashMap<String,String>();
 
     public BFOXMLReader(BFOSAXParserFactory factory) {
         if (factory == null) {
@@ -68,7 +70,7 @@ public class BFOXMLReader implements XMLReader, Locator {
        } else if ("http://xml.org/sax/features/validation".equals(name)) {
            return false;
        } else if ("http://xml.org/sax/features/string-interning".equals(name)) {
-           return false;
+           return featureInternStrings;
        } else if ("http://apache.org/xml/features/nonvalidating/load-external-dtd".equals(name)) {
            return featureLoadExternalDTD;
        } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
@@ -103,7 +105,10 @@ public class BFOXMLReader implements XMLReader, Locator {
                throw new SAXNotSupportedException(name + " only supports false");
            }
        } else if ("http://xml.org/sax/features/string-interning".equals(name)) {
-           //noop
+           // This is done on a document-wide basis; "interned" strings are dropped
+           // at the end of the parse. Element and Attribute localNames, qNames, and URIs
+           // are interned - it actually makes good sense for huge documents.
+           featureInternStrings = value;
        } else if ("http://xml.org/sax/features/namespace-prefixes".equals(name)) {
            featureNamespacePrefixes = value;
        } else if ("http://xml.org/sax/features/use-entity-resolver2".equals(name)) {
@@ -253,7 +258,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         }
         if (in.getCharacterStream() == null && in.getByteStream() == null && in.getSystemId() != null) {
             // Xerces does not call our set handler here.
-            InputSource in2 = factory.resolveEntity(in.getPublicId(), in.getSystemId(), this);
+            InputSource in2 = factory.resolveEntity(in.getPublicId(), in.getSystemId(), this, false);
             if (in2 != null) {
                 in = in2;
             }
@@ -350,6 +355,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             dtd = null;
             stack.clear();
             entityStack.clear();
+            internMap.clear();
         }
     }
 
@@ -438,7 +444,7 @@ public class BFOXMLReader implements XMLReader, Locator {
         if (reader == null) {
             reader = curreader;
         }
-        throw new SAXParseException(factory.message(locale, msg), reader.getPublicId(), reader.getSystemId(), reader.getLineNumber(), reader.getColumnNumber());
+        throw new SAXParseException(factory.message(locale, msg), reader == null ? null : reader.getPublicId(), reader == null ? null : reader.getSystemId(), reader == null ? -1 : reader.getLineNumber(), reader == null ? -1 : reader.getColumnNumber());
     }
 
     static String hex(int c) {
@@ -1929,6 +1935,9 @@ public class BFOXMLReader implements XMLReader, Locator {
         c = reader.read();
         // endElement
         String qName = readName(reader);
+        if (featureInternStrings) {
+            qName = intern(qName);
+        }
         if (isS(c)) {
             readS(reader);
         }
@@ -1945,6 +1954,9 @@ public class BFOXMLReader implements XMLReader, Locator {
             if (ix > 0) {
                 String prefix = qName.substring(0, ix);
                 String localName = qName.substring(ix + 1);
+                if (featureInternStrings) {
+                    localName = intern(localName);
+                }
                 uri = ctx.namespace(prefix);
                 if (q.isContentHandler()) {
                     q.endElement(uri, localName, qName);
@@ -1967,7 +1979,7 @@ public class BFOXMLReader implements XMLReader, Locator {
 
     private void readSTag(final CPReader reader) throws IOException, SAXException {
         // startElement
-        final String qName = readName(reader);
+        final String qName = featureInternStrings ? intern(readName(reader)) : readName(reader);
         List<String> tmpatts = null;
         boolean selfClosing = false;
         if (isS(c)) {
@@ -1977,6 +1989,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "ElementUnterminated", qName);
                 }
                 String attName = readName(reader);
+                if (featureInternStrings) {
+                    attName = intern(attName);
+                }
                 if (isS(c)) {
                     readS(reader);
                 }
@@ -2045,6 +2060,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     String attQName = tmpatts.get(i);
                     if (attQName.equals("xmlns")) {
                         String attValue = tmpatts.get(i + 1);
+                        if (featureInternStrings) {
+                            attValue = intern(attValue);
+                        }
                         if (q.isContentHandler()) {
                             q.startPrefixMapping("", attValue);
                             if (ctx.prefixes == null) {
@@ -2064,6 +2082,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                             error(reader, "CantBindXML");
                         }
                         String attValue = tmpatts.get(i + 1);
+                        if (featureInternStrings) {
+                            attValue = intern(attValue);
+                        }
                         if (q.isContentHandler()) {
                             q.startPrefixMapping(prefix, attValue);
                             if (ctx.prefixes == null) {
@@ -2119,6 +2140,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (ix > 0) {
                             String prefix = attQName.substring(0, ix);
                             String localName = attQName.substring(ix + 1);
+                            if (featureInternStrings) {
+                                localName = intern(localName);
+                            }
                             if (localName.indexOf(':') >= 0) {
                                 error(reader, "Attribute " + fmt(attQName) + " not a valid QName");
                             }
@@ -2154,6 +2178,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     error(reader, "ElementXMLNSPrefix");
                 }
                 String localName = qName.substring(ix + 1);
+                if (featureInternStrings) {
+                    localName = intern(localName);
+                }
                 if (localName.indexOf(':') >= 0) {
                     error(reader, "Element " + fmt(qName) + " not a valid QName");
                 }
@@ -2551,7 +2578,7 @@ public class BFOXMLReader implements XMLReader, Locator {
             } else if (entity.isGeneral() && !featureExternalGeneralEntities) {
                 error(reader, "External general entity " + entity.getName() + " disallowed with \"http://xml.org/sax/features/external-parameter-entities\" feature");
             }
-            source = factory.resolveEntity(publicId, resolvedSystemId, this);
+            source = factory.resolveEntity(publicId, resolvedSystemId, this, true);
         }
 
         if (dtd != null && !dtd.isClosed() && factory.getCache() != null) {
@@ -2567,6 +2594,11 @@ public class BFOXMLReader implements XMLReader, Locator {
             dtd.getWorkingDependencies().put(entity, (InputSourceURN)source);
         }
         return source;
+    }
+
+    private String intern(String s) {
+        String t = internMap.putIfAbsent(s, s);
+        return t == null ? s : t;
     }
 
     /**

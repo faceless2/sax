@@ -128,7 +128,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     private final Map<DTD,DTD> dtdcache = new HashMap<DTD,DTD>();
 
-    InputSourceURN resolveEntity(String publicId, String resolvedSystemId, BFOXMLReader xml) throws SAXException, IOException {
+    InputSourceURN resolveEntity(String publicId, String resolvedSystemId, BFOXMLReader xml, boolean entity) throws SAXException, IOException {
         String s = publicIdMap.get(publicId);
         if (s != null) {
             resolvedSystemId = s;
@@ -139,32 +139,34 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                 String scheme = furl.getProtocol();
                 String urn = null;
 
-                // Check if we're allowed to access this URL
-                try {
-                    String allowedSchemes = (String)xml.getProperty("http://javax.xml.XMLConstants/property/accessExternalDTD");
-                    if (allowedSchemes == null) {
-                        allowedSchemes = System.getProperty("javax.xml.accessExternalDTD");
+                if (entity) {
+                    // Check if we're allowed to access this URL
+                    try {
+                        String allowedSchemes = (String)xml.getProperty("http://javax.xml.XMLConstants/property/accessExternalDTD");
                         if (allowedSchemes == null) {
-                            if (xml.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING)) {
-                                allowedSchemes = "";
-                            } else {
-                                allowedSchemes = "all";
+                            allowedSchemes = System.getProperty("javax.xml.accessExternalDTD");
+                            if (allowedSchemes == null) {
+                                if (xml.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING)) {
+                                    allowedSchemes = "";
+                                } else {
+                                    allowedSchemes = "all";
+                                }
                             }
                         }
-                    }
-                    if (scheme.equals("https")) {
-                        scheme = "http";
-                    }
-                    if (allowedSchemes.length() == 0) {
-                        xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
-                    } else if (!allowedSchemes.equals("all")) {
-                        List<String> l = Arrays.asList(allowedSchemes.split(","));
-                        if (!l.contains(scheme) && !(scheme.equals("http") && l.contains("https"))) {
-                            xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
+                        if (scheme.equals("https")) {
+                            scheme = "http";
                         }
+                        if (allowedSchemes.length() == 0) {
+                            xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
+                        } else if (!allowedSchemes.equals("all")) {
+                            List<String> l = Arrays.asList(allowedSchemes.split(","));
+                            if (!l.contains(scheme) && !(scheme.equals("http") && l.contains("https"))) {
+                                xml.error(null, "External entity load from " + resolvedSystemId + " disallowed by \"http://javax.xml.XMLConstants/property/accessExternalDTD\"");
+                            }
+                        }
+                    } catch (SAXNotRecognizedException e) {
+                        throw new SAXException(e);
                     }
-                } catch (SAXNotRecognizedException e) {
-                    throw new SAXException(e);
                 }
 
                 if (scheme.equals("file")) {
