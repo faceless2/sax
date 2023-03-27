@@ -81,7 +81,11 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         return null;
     }
     @Override public boolean isNamespaceAware() {
-        return true;
+        try {
+            return getFeature("http://xml.org/sax/features/namespaces");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
     @Override public boolean isValidating() {
         return false;
@@ -104,8 +108,10 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         FEATUREHOLDER.setFeature(name, value);
     }
     @Override public void setNamespaceAware(boolean awareness) {
-        if (!awareness) {
-            throw new UnsupportedOperationException("namespaces are required");
+        try {
+            setFeature("http://xml.org/sax/features/namespaces", awareness);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
     @Override public void setSchema(Schema schema) {

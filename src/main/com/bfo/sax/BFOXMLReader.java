@@ -18,6 +18,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private int inputBufferSize;
     private boolean standalone;                                 // TODO
     private boolean featureThreads = true;
+    private boolean featureNamespaces = true;
     private boolean featureEntityResolver2 = true;
     private boolean featureLoadExternalDTD = true;
     private boolean featureExternalGeneralEntities = true;
@@ -66,7 +67,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
     @Override public boolean getFeature(String name) {
        if ("http://xml.org/sax/features/namespaces".equals(name)) {
-           return true;
+           return featureNamespaces;
        } else if ("http://xml.org/sax/features/validation".equals(name)) {
            return false;
        } else if ("http://xml.org/sax/features/string-interning".equals(name)) {
@@ -97,9 +98,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     }
     @Override public void setFeature(String name, boolean value) throws SAXNotRecognizedException, SAXNotSupportedException {
        if ("http://xml.org/sax/features/namespaces".equals(name)) {
-           if (value != true) {
-               throw new SAXNotSupportedException(name + " only supports true");
-           }
+           featureNamespaces = value;
        } else if ("http://xml.org/sax/features/validation".equals(name)) {
            if (value != false) {
                throw new SAXNotSupportedException(name + " only supports false");
@@ -1949,27 +1948,33 @@ public class BFOXMLReader implements XMLReader, Locator {
             error(reader, "ETagRequired", ctx.name, qName);
         }
         if (c == '>') {
-            int ix = qName.indexOf(':');
-            String uri;
-            if (ix > 0) {
-                String prefix = qName.substring(0, ix);
-                String localName = qName.substring(ix + 1);
-                if (featureInternStrings) {
-                    localName = intern(localName);
+            if (featureNamespaces) {
+                int ix = qName.indexOf(':');
+                String uri;
+                if (ix > 0) {
+                    String prefix = qName.substring(0, ix);
+                    String localName = qName.substring(ix + 1);
+                    if (featureInternStrings) {
+                        localName = intern(localName);
+                    }
+                    uri = ctx.namespace(prefix);
+                    if (q.isContentHandler()) {
+                        q.endElement(uri, localName, qName);
+                    }
+                } else {
+                    uri = ctx.namespace("");
+                    if (q.isContentHandler()) {
+                        q.endElement(uri, qName, qName);
+                    }
                 }
-                uri = ctx.namespace(prefix);
-                if (q.isContentHandler()) {
-                    q.endElement(uri, localName, qName);
+                if (q.isContentHandler() && ctx.prefixes != null) {
+                    for (String s : ctx.prefixes) {
+                        q.endPrefixMapping(s);
+                    }
                 }
             } else {
-                uri = ctx.namespace("");
                 if (q.isContentHandler()) {
-                    q.endElement(uri, qName, qName);
-                }
-            }
-            if (q.isContentHandler() && ctx.prefixes != null) {
-                for (String s : ctx.prefixes) {
-                    q.endPrefixMapping(s);
+                    q.endElement("", "", qName);
                 }
             }
         } else {
@@ -2056,45 +2061,47 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
             if (tmpatts != null) {
-                for (int i=0;i<tmpatts.size();i+=2) {
-                    String attQName = tmpatts.get(i);
-                    if (attQName.equals("xmlns")) {
-                        String attValue = tmpatts.get(i + 1);
-                        if (featureInternStrings) {
-                            attValue = intern(attValue);
-                        }
-                        if (q.isContentHandler()) {
-                            q.startPrefixMapping("", attValue);
-                            if (ctx.prefixes == null) {
-                                ctx.prefixes = new ArrayList<String>();
+                if (featureNamespaces) {
+                    for (int i=0;i<tmpatts.size();i+=2) {
+                        String attQName = tmpatts.get(i);
+                        if (attQName.equals("xmlns")) {
+                            String attValue = tmpatts.get(i + 1);
+                            if (featureInternStrings) {
+                                attValue = intern(attValue);
                             }
-                            ctx.prefixes.add("");
-                        }
-                        ctx.register("", attValue);
-                        if (!featureNamespacePrefixes) {
-                            tmpatts.set(i, null);
-                        }
-                    } else if (attQName.startsWith("xmlns:")) {
-                        String prefix = attQName.substring(6);
-                        if (prefix.equals("xmlns") || prefix.equals("xml")) {
-                            error(reader, "CantBindXMLNS");
-                        } else if (prefix.equals("xml")) {
-                            error(reader, "CantBindXML");
-                        }
-                        String attValue = tmpatts.get(i + 1);
-                        if (featureInternStrings) {
-                            attValue = intern(attValue);
-                        }
-                        if (q.isContentHandler()) {
-                            q.startPrefixMapping(prefix, attValue);
-                            if (ctx.prefixes == null) {
-                                ctx.prefixes = new ArrayList<String>();
+                            if (q.isContentHandler()) {
+                                q.startPrefixMapping("", attValue);
+                                if (ctx.prefixes == null) {
+                                    ctx.prefixes = new ArrayList<String>();
+                                }
+                                ctx.prefixes.add("");
                             }
-                            ctx.prefixes.add(prefix);
-                        }
-                        ctx.register(prefix, attValue);
-                        if (!featureNamespacePrefixes) {
-                            tmpatts.set(i, null);
+                            ctx.register("", attValue);
+                            if (!featureNamespacePrefixes) {
+                                tmpatts.set(i, null);
+                            }
+                        } else if (attQName.startsWith("xmlns:")) {
+                            String prefix = attQName.substring(6);
+                            if (prefix.equals("xmlns") || prefix.equals("xml")) {
+                                error(reader, "CantBindXMLNS");
+                            } else if (prefix.equals("xml")) {
+                                error(reader, "CantBindXML");
+                            }
+                            String attValue = tmpatts.get(i + 1);
+                            if (featureInternStrings) {
+                                attValue = intern(attValue);
+                            }
+                            if (q.isContentHandler()) {
+                                q.startPrefixMapping(prefix, attValue);
+                                if (ctx.prefixes == null) {
+                                    ctx.prefixes = new ArrayList<String>();
+                                }
+                                ctx.prefixes.add(prefix);
+                            }
+                            ctx.register(prefix, attValue);
+                            if (!featureNamespacePrefixes) {
+                                tmpatts.set(i, null);
+                            }
                         }
                     }
                 }
@@ -2105,10 +2112,6 @@ public class BFOXMLReader implements XMLReader, Locator {
                             atts = new BFOAttributes();
                         }
                         String attValue = tmpatts.get(i++);
-                        int ix = attQName.indexOf(":");
-                        if (ix == 0 && factory.xercescompat && reader.isXML11()) {
-                            error(reader, "Attribute " + fmt(attQName) + " has zero-length prefix");
-                        }
                         // "If the attribute type is not CDATA, then the XML processor must further process
                         //  the normalized attribute value by discarding any leading and trailing space
                         //  characters, and by replacing sequences of space characters by a
@@ -2137,82 +2140,101 @@ public class BFOXMLReader implements XMLReader, Locator {
                             attValue = sb.toString();
                         }
 
-                        if (ix > 0) {
-                            String prefix = attQName.substring(0, ix);
-                            String localName = attQName.substring(ix + 1);
-                            if (featureInternStrings) {
-                                localName = intern(localName);
+                        if (featureNamespaces) {
+                            int ix = attQName.indexOf(":");
+                            if (ix == 0 && factory.xercescompat && reader.isXML11()) {
+                                error(reader, "Attribute " + fmt(attQName) + " has zero-length prefix");
                             }
-                            if (localName.indexOf(':') >= 0) {
-                                error(reader, "Attribute " + fmt(attQName) + " not a valid QName");
-                            }
-                            if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
-                                error(reader, "Attribute " + fmt(attQName) + " has zero-length localName");
-                            }
-                            String uri = ctx.namespace(prefix);
-                            if (uri == null) {
-                                error(reader, "AttributePrefixUnbound", qName, attQName, prefix);
-                            }
-                            for (int j=0;j<atts.getLength();j++) {
-                                if (atts.getLocalName(j).equals(localName) && atts.getURI(j).equals(uri)) {
-                                    error(reader, "AttributeNSNotUnique", qName, localName, uri);
+                            if (ix > 0) {
+                                String prefix = attQName.substring(0, ix);
+                                String localName = attQName.substring(ix + 1);
+                                if (featureInternStrings) {
+                                    localName = intern(localName);
                                 }
+                                if (localName.indexOf(':') >= 0) {
+                                    error(reader, "Attribute " + fmt(attQName) + " not a valid QName");
+                                }
+                                if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
+                                    error(reader, "Attribute " + fmt(attQName) + " has zero-length localName");
+                                }
+                                String uri = ctx.namespace(prefix);
+                                if (uri == null) {
+                                    error(reader, "AttributePrefixUnbound", qName, attQName, prefix);
+                                }
+                                for (int j=0;j<atts.getLength();j++) {
+                                    if (atts.getLocalName(j).equals(localName) && atts.getURI(j).equals(uri)) {
+                                        error(reader, "AttributeNSNotUnique", qName, localName, uri);
+                                    }
+                                }
+                                atts.add(uri, localName, attQName, "CDATA", attValue);
+                            } else {
+                                atts.add("", attQName, attQName, "CDATA", attValue);
                             }
-                            atts.add(uri, localName, attQName, "CDATA", attValue);
                         } else {
-                            atts.add("", attQName, attQName, "CDATA", attValue);
+                            atts.add("", "", attQName, "CDATA", attValue);
                         }
                     } else {
                         i++;
                     }
                 }
             }
-            int ix = qName.indexOf(':');
-            if (ix == 0 && factory.xercescompat && reader.isXML11()) {
-                error(reader, "Element " + fmt(qName) + " has zero-length prefix");
-            }
-            String uri;
-            if (ix > 0) {
-                String prefix = qName.substring(0, ix);
-                if (prefix.equals("xmlns")) {
-                    error(reader, "ElementXMLNSPrefix");
+            if (featureNamespaces) {
+                int ix = qName.indexOf(':');
+                if (ix == 0 && factory.xercescompat && reader.isXML11()) {
+                    error(reader, "Element " + fmt(qName) + " has zero-length prefix");
                 }
-                String localName = qName.substring(ix + 1);
-                if (featureInternStrings) {
-                    localName = intern(localName);
+                String uri;
+                if (ix > 0) {
+                    String prefix = qName.substring(0, ix);
+                    if (prefix.equals("xmlns")) {
+                        error(reader, "ElementXMLNSPrefix");
+                    }
+                    String localName = qName.substring(ix + 1);
+                    if (featureInternStrings) {
+                        localName = intern(localName);
+                    }
+                    if (localName.indexOf(':') >= 0) {
+                        error(reader, "Element " + fmt(qName) + " not a valid QName");
+                    }
+                    if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
+                        error(reader, "Element " + fmt(qName) + " has zero-length localName");
+                    }
+                    uri = ctx.namespace(prefix);
+                    if (uri == null) {
+                        error(reader, "ElementPrefixUnbound", qName, prefix);
+                    }
+                    if (q.isContentHandler()) {
+                        q.startElement(uri, localName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
+                        if (selfClosing) {
+                            q.endElement(uri, localName, qName);
+                        } else {
+                            stack.add(ctx);
+                        }
+                    }
+                } else {
+                    uri = ctx.namespace("");
+                    if (q.isContentHandler()) {
+                        q.startElement(uri, qName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
+                        if (selfClosing) {
+                            q.endElement(uri, qName, qName);
+                        } else {
+                            stack.add(ctx);
+                        }
+                    }
                 }
-                if (localName.indexOf(':') >= 0) {
-                    error(reader, "Element " + fmt(qName) + " not a valid QName");
-                }
-                if (factory.xercescompat && localName.length() == 0 && reader.isXML11()) {
-                    error(reader, "Element " + fmt(qName) + " has zero-length localName");
-                }
-                uri = ctx.namespace(prefix);
-                if (uri == null) {
-                    error(reader, "ElementPrefixUnbound", qName, prefix);
-                }
-                if (q.isContentHandler()) {
-                    q.startElement(uri, localName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
-                    if (selfClosing) {
-                        q.endElement(uri, localName, qName);
-                    } else {
-                        stack.add(ctx);
+                if (selfClosing && q.isContentHandler() && ctx.prefixes != null) {
+                    for (String s : ctx.prefixes) {
+                        q.endPrefixMapping(s);
                     }
                 }
             } else {
-                uri = ctx.namespace("");
                 if (q.isContentHandler()) {
-                    q.startElement(uri, qName, qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
+                    q.startElement("", "", qName, atts != null ? atts : BFOAttributes.EMPTYATTS);
                     if (selfClosing) {
-                        q.endElement(uri, qName, qName);
+                        q.endElement("", "", qName);
                     } else {
                         stack.add(ctx);
                     }
-                }
-            }
-            if (selfClosing && q.isContentHandler() && ctx.prefixes != null) {
-                for (String s : ctx.prefixes) {
-                    q.endPrefixMapping(s);
                 }
             }
         }

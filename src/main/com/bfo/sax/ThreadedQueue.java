@@ -119,7 +119,6 @@ class ThreadedQueue extends Queue {
         add(MsgType.notationDecl, a1, a2, a3);
     }
     @Override public InputSource resolveEntity(String a1, String a2) throws SAXException, IOException {
-
         return (InputSource)now(MsgType.resolveEntity, a1, a2);
     }
     @Override public InputSource getExternalSubset(String a1, String a2) throws SAXException, IOException {
