@@ -30,6 +30,9 @@ class DirectQueue extends Queue {
     @Override public int getColumnNumber() {
         return locator.getColumnNumber();
     }
+    @Override public int getCharacterOffset() {
+        return -1;
+    }
     @Override public void attributeDecl(String a1, String a2, String a3, String a4, String a5) throws SAXException {
         declHandler.attributeDecl(a1, a2, a3, a4, a5);
     }

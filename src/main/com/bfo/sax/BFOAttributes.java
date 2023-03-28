@@ -4,38 +4,41 @@ import java.util.*;
 import org.xml.sax.*;
 
 class BFOAttributes implements Attributes {
+    private static final int NUMFIELDS = 6;
+    private static final String SPECIFIED = "specified";
     List<String> l = new ArrayList<String>();       // uri, lname, qname, type, value
-    void add(String uri, String localName, String qName, String type, String value) {
+    void add(String uri, String localName, String qName, String type, String value, boolean specified) {
         l.add(uri);
         l.add(localName);
         l.add(qName);
         l.add(type);
         l.add(value);
+        l.add(specified ? SPECIFIED : null);
     }
     @Override public int getIndex(String qName) {
-        for (int i=0;i<l.size();i+=5) {
+        for (int i=0;i<l.size();i+=NUMFIELDS) {
             if (l.get(i + 2).equals(qName)) {
-                return i / 5;
+                return i / NUMFIELDS;
             }
         }
         return -1;
     }
     @Override public int getIndex(String uri, String localName) {
-        for (int i=0;i<l.size();i+=5) {
+        for (int i=0;i<l.size();i+=NUMFIELDS) {
             if (l.get(i + 1).equals(localName) && l.get(i).equals(uri)) {
-                return i / 5;
+                return i / NUMFIELDS;
             }
         }
         return -1;
     }
     @Override public int getLength() {
-        return l.size() / 5;
+        return l.size() / NUMFIELDS;
     }
     @Override public String getLocalName(int index) {
-        return index < 0 || index >= getLength() ? null : l.get(index * 5 + 1);
+        return index < 0 || index >= getLength() ? null : l.get(index * NUMFIELDS + 1);
     }
     @Override public String getQName(int index) {
-        return index < 0 || index >= getLength() ? null : l.get(index * 5 + 2);
+        return index < 0 || index >= getLength() ? null : l.get(index * NUMFIELDS + 2);
     }
     @Override public String getType(int index) {
         return index < 0 || index >= getLength() ? null : l.get(index * 4 + 3);
@@ -49,10 +52,13 @@ class BFOAttributes implements Attributes {
         return v < 0 ? null : getType(v);
     }
     @Override public String getURI(int index) {
-        return index < 0 || index >= getLength() ? null : l.get(index * 5);
+        return index < 0 || index >= getLength() ? null : l.get(index * NUMFIELDS);
     }
     @Override public String getValue(int index) {
-        return index < 0 || index >= getLength() ? null : l.get(index * 5 + 4);
+        return index < 0 || index >= getLength() ? null : l.get(index * NUMFIELDS + 4);
+    }
+    public boolean isSpecified(int index) {
+        return index < 0 || index >= getLength() ? null : l.get(index * NUMFIELDS + 5) == SPECIFIED;
     }
     @Override public String getValue(String qName) {
         int v = getIndex(qName);

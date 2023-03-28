@@ -6,10 +6,11 @@ import java.util.logging.*;
 import java.util.concurrent.*;
 import java.net.URL;
 import javax.xml.XMLConstants;
+import javax.xml.stream.Location;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 
-public class BFOXMLReader implements XMLReader, Locator {
+public class BFOXMLReader implements XMLReader, Locator, Location {
 
     final Logger cachelog = Logger.getLogger("com.bfo.sax.Cache");
     private int c, len;
@@ -34,6 +35,7 @@ public class BFOXMLReader implements XMLReader, Locator {
     private int generalEntityExpansionCount, maxGeneralEntityExpansionCount;
     private Queue q;
     private DTD dtd;
+    private BFOXMLStreamReader xmlStreamReader;
     private ContentHandler contentHandler;
     private LexicalHandler lexicalHandler;
     private EntityResolver entityResolver;
@@ -199,6 +201,10 @@ public class BFOXMLReader implements XMLReader, Locator {
         this.errorHandler = handler;
     }
 
+    @Override public int getCharacterOffset() {
+        // return curreader != null ? curreader.getCharacterOffset() : -1;
+        return -1;
+    }
     @Override public int getColumnNumber() {
         return curreader != null ? curreader.getColumnNumber() : -1;
     }
@@ -229,6 +235,16 @@ public class BFOXMLReader implements XMLReader, Locator {
         sb.append(getClass().getName());
         sb.append("\"}");
         return sb.toString();
+    }
+
+    void parse(InputSource in, BFOXMLStreamReader xmlStreamReader) throws IOException, SAXException {
+        featureEntityResolver2 = true;
+        featureThreads = true;
+        this.xmlStreamReader = xmlStreamReader;
+        DefaultHandler2 dh = new DefaultHandler2();
+        setContentHandler(dh);
+        setEntityResolver(dh);
+        parse(in);
     }
 
     @Override public void parse(InputSource in) throws IOException, SAXException {
@@ -326,7 +342,11 @@ public class BFOXMLReader implements XMLReader, Locator {
                         throw new RuntimeException(e);
                     }
                 }
-                tq.run();
+                if (this.xmlStreamReader != null) {
+                    this.xmlStreamReader.init(this, tq);
+                } else {
+                    tq.run();
+                }
             } else {
                 q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
 
@@ -348,14 +368,20 @@ public class BFOXMLReader implements XMLReader, Locator {
                 }
             }
         } finally {
-            q = null;
-            buf = null;
-            curreader = null;
-            dtd = null;
-            stack.clear();
-            entityStack.clear();
-            internMap.clear();
+            if (xmlStreamReader == null) {
+                postParse();
+            }
         }
+    }
+
+    void postParse() {
+        q = null;
+        buf = null;
+        curreader = null;
+        dtd = null;
+        stack.clear();
+        entityStack.clear();
+        internMap.clear();
     }
 
     private static class Context {
@@ -2059,6 +2085,9 @@ public class BFOXMLReader implements XMLReader, Locator {
                     tmpatts.add(a.getQName());
                     tmpatts.add(a.getDefaultValue());
                 }
+                if (defaultAtts.isEmpty()) {
+                    defaultAtts = null;
+                }
             }
             if (tmpatts != null) {
                 if (featureNamespaces) {
@@ -2111,6 +2140,7 @@ public class BFOXMLReader implements XMLReader, Locator {
                         if (atts == null) {
                             atts = new BFOAttributes();
                         }
+                        final boolean specified = defaultAtts == null || !defaultAtts.containsKey(attQName);
                         String attValue = tmpatts.get(i++);
                         // "If the attribute type is not CDATA, then the XML processor must further process
                         //  the normalized attribute value by discarding any leading and trailing space
@@ -2166,12 +2196,12 @@ public class BFOXMLReader implements XMLReader, Locator {
                                         error(reader, "AttributeNSNotUnique", qName, localName, uri);
                                     }
                                 }
-                                atts.add(uri, localName, attQName, "CDATA", attValue);
+                                atts.add(uri, localName, attQName, "CDATA", attValue, specified);
                             } else {
-                                atts.add("", attQName, attQName, "CDATA", attValue);
+                                atts.add("", attQName, attQName, "CDATA", attValue, specified);
                             }
                         } else {
-                            atts.add("", "", attQName, "CDATA", attValue);
+                            atts.add("", "", attQName, "CDATA", attValue, specified);
                         }
                     } else {
                         i++;

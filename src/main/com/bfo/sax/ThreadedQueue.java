@@ -6,16 +6,17 @@ import java.io.IOException;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.xml.stream.Location;
 
 class ThreadedQueue extends Queue {
     private String publicId, systemId;
-    private int line, column;
+    private int line, column, charOffset;
     private final Rec[] q;
     private final ReentrantLock lock;
     private final Condition notEmpty, maybeEmpty;
     private final AtomicReference<Object> reply;
     private int takeIndex, putIndex, count;
-    private Locator locator;
+    private Location locator;
 
     ThreadedQueue(ContentHandler contentHandler, DeclHandler declHandler, DTDHandler dtdHandler, EntityResolver entityResolver, ErrorHandler errorHandler, LexicalHandler lexicalHandler) {
         super(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
@@ -43,6 +44,9 @@ class ThreadedQueue extends Queue {
     }
     @Override public int getColumnNumber() {
         return column;
+    }
+    @Override public int getCharacterOffset() {
+        return charOffset;
     }
     private void testFail() {
         if (reply.get() instanceof Exception ) {
@@ -134,19 +138,22 @@ class ThreadedQueue extends Queue {
         now(MsgType.warning, a1);
     }
     @Override public void fatalError(SAXParseException a1) throws SAXException {
+        a1.printStackTrace();
         now(MsgType.fatalError, a1);
         throw a1;       // Won't get this far, because fail will be set.
     }
     @Override public void fatalError2(Exception a1) throws IOException, SAXException {
+        a1.printStackTrace();
         now(MsgType.fatalError, a1);
         throw new SAXException("Unhandled Exception", a1);       // Won't get this far, because fail will be set.
     }
     @Override public void setDocumentLocator(Locator locator) {
-        this.locator = locator;
+        this.locator = (Location)locator;
         publicId = locator.getPublicId();
         systemId = locator.getSystemId();
         line = locator.getLineNumber();
         column = locator.getColumnNumber();
+        charOffset = this.locator.getCharacterOffset();
         add(MsgType.setDocumentLocator, this);
     }
     void close() {
@@ -238,6 +245,7 @@ class ThreadedQueue extends Queue {
             r.systemId = locator.getSystemId();
             r.line = locator.getLineNumber();
             r.column = locator.getColumnNumber();
+            r.charOffset = locator.getCharacterOffset();
             System.arraycopy(o, 0, r.o, 0, o.length);
             if (++putIndex == q.length) {
                 putIndex = 0;
@@ -255,7 +263,7 @@ class ThreadedQueue extends Queue {
      * Wait for a message on the queue, and return it
      * once it exists, leaving the queue state unchanged
      */
-    private MsgType peek(Object[] out) {
+    MsgType peek(Object[] out) {
         try {
             lock.lockInterruptibly();
             while (count == 0) {
@@ -282,7 +290,7 @@ class ThreadedQueue extends Queue {
      * Remove the message from the queue, waiting for it
      * if necessary.
      */
-    private void remove() {
+    void remove() {
         try {
             lock.lockInterruptibly();
             while (count == 0) {
@@ -306,6 +314,20 @@ class ThreadedQueue extends Queue {
         }
     }
 
+    /**
+     * Send after peeking a message but before removing it.
+     * @param o the reply object, may be null;
+     */
+    void reply(Object o) {
+        synchronized(reply) {
+            reply.set(o == null ? reply : o); // reply=reply: magic value meaning null
+            reply.notify();
+        }
+    }
+
+    /**
+     * For SAX
+     */
     public void run() throws SAXException, IOException {
         Object[] o = new Object[8];
         boolean active = reply.get() == null;// in case it fails before we start
@@ -435,10 +457,7 @@ class ThreadedQueue extends Queue {
                         throw new IllegalStateException("Unhandled type " + type);
                 }
                 if (exchange) {
-                    synchronized(reply) {
-                        reply.set(output == null ? reply : output); // reply=reply: magic value meaning null
-                        reply.notify();
-                    }
+                    reply(output);
                 }
             } catch (Throwable e) {
                 synchronized(reply) {
@@ -465,7 +484,7 @@ class ThreadedQueue extends Queue {
         }
     }
 
-    private static enum MsgType {
+    static enum MsgType {
         attributeDecl(5), comment(3), elementDecl(2), endCDATA(0), endDTD(0), endEntity(1), endPrefixMapping(1),
         externalEntityDecl(3), internalEntityDecl(2), startCDATA(0), startDTD(3), startEntity(1),
         characters(3), endDocument(0), endElement(3), ignorableWhitespace(3), notationDecl(3),
@@ -483,8 +502,7 @@ class ThreadedQueue extends Queue {
     private static class Rec {
         MsgType type;
         String publicId, systemId;
-        int line, column;
+        int line, column, charOffset;
         final Object[] o = new Object[5];
     }
 }
-
