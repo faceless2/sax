@@ -2558,15 +2558,37 @@ public class BFOXMLReader implements XMLReader, Locator {
     
     private CPReader getEntityReader(final CPReader reader, final Entity entity) throws SAXException, IOException {
         final boolean xml11 = reader.isXML11();
+        CPReader out = null;
         if (entity.getValue() != null) {
-            return CPReader.getReader(entity.getValue(), entity.getPublicId(), entity.getSystemId(), entity.getLineNumber(), entity.getColumnNumber(), xml11);
-        }
-        InputSource source = getExternalEntityInputSource(reader, entity);
-        if (source != null) {
-            return CPReader.normalize(CPReader.getReader(source), xml11);
+            out = CPReader.getReader(entity.getValue(), entity.getPublicId(), entity.getSystemId(), entity.getLineNumber(), entity.getColumnNumber(), xml11);
         } else {
-            return null;
+            InputSource source = getExternalEntityInputSource(reader, entity);
+            if (source != null) {
+                String urn = null;
+                if (factory.getCache() != null && featureCachePublicId && source.getPublicId() != null) {
+                    urn = "urn:xml:" + source.getPublicId();
+                    String value = factory.getCache().getEntity(urn, xml11);
+                    if (cachelog.isLoggable(Level.FINE)) {
+                        cachelog.fine("Cache entityget(" + urn + ") " + (value == null ? "miss":"hit"));
+                    }
+                    if (value != null) {
+                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), -1, -1, xml11);
+                    }
+                }
+                if (out == null) {
+                    out = CPReader.normalize(CPReader.getReader(source), xml11);
+                    if (urn != null) {
+                        String value = out.asString();
+                        if (cachelog.isLoggable(Level.FINE)) {
+                            cachelog.fine("Cache entityput(" + urn + ")");
+                        }
+                        factory.getCache().putEntity(urn, xml11, value);
+                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), -1, -1, xml11);
+                    }
+                }
+            }
         }
+        return out;
     }
 
     private InputSource getExternalEntityInputSource(final CPReader reader, final Entity entity) throws SAXException, IOException {
