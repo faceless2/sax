@@ -17,8 +17,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
     private int state;
     private Attributes atts;
     private Map<String,Object> properties;
-    private String version, charEncodingScheme, encoding;       // TODO
-    private Boolean standalone;                                 // TODO
+    private String version, charset, encoding, standalone;
     private String uri, localName, prefix, piTarget, piData;
     private char[] text;
     private int textOffset, textLength;
@@ -34,7 +33,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
         this.properties = properties != null ? properties : Collections.<String,Object>emptyMap();
     }
 
-    void init(BFOXMLReader reader, ThreadedQueue q) {
+    void init(BFOXMLReader xmlreader, ThreadedQueue q) {
         this.xmlreader = xmlreader;
         this.q = q;
     }
@@ -44,7 +43,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
      */
     public int next() throws XMLStreamException {
         state = -1;
-        boolean halt = false;
+        boolean halt = false, indtd = false;
         final Object[] o = new Object[8];
         while (active && !halt) {
             ThreadedQueue.MsgType type = q.peek(o);
@@ -53,6 +52,9 @@ class BFOXMLStreamReader implements XMLStreamReader {
             // ATTRIBUTE, CDATA, CHARACTERS, COMMENT, DTD, END_DOCUMENT, END_ELEMENT, ENTITY_DECLARATION, ENTITY_REFERENCE, NAMESPACE, NOTATION_DECLARATION, PROCESSING_INSTRUCTION, SPACE, START_DOCUMENT, START_ELEMENT
             try {
                 switch (type) {
+                    case startDTD:
+                        indtd = true;
+                        break;
                     case attributeDecl:
                     case elementDecl:
                     case externalEntityDecl:
@@ -60,8 +62,9 @@ class BFOXMLStreamReader implements XMLStreamReader {
                     case unparsedEntityDecl:
                     case resolveEntity:
                     case endEntity:
-                    case startDTD:
                     case internalEntityDecl:
+                    case startDocument:
+                    case endPrefixMapping:
                         break;
                     case comment:
                         state = COMMENT;
@@ -74,6 +77,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
                         halt = true;
                         break;
                     case endDTD:
+                        indtd = false;
                         state = DTD;
                         halt = true;
                         break;
@@ -89,12 +93,20 @@ class BFOXMLStreamReader implements XMLStreamReader {
                         textOffset = textLength = 0;
                         break;
                     case characters:
+                        text = (char[])o[0];
+                        textOffset = (Integer)o[1];
+                        textLength = (Integer)o[2];
+                        if (state < 0 && textLength > 0) {
+                            state = CHARACTERS;
+                            halt = true;
+                        }
+                        break;
                     case ignorableWhitespace:
                         text = (char[])o[0];
                         textOffset = (Integer)o[1];
                         textLength = (Integer)o[2];
-                        if (state < 0) {
-                            state = CHARACTERS;
+                        if (state < 0 && textLength > 0) {
+                            state = SPACE;
                             halt = true;
                         }
                         break;
@@ -109,6 +121,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
                         localName = (String)o[2];
                         ix = qName.indexOf(":");
                         prefix = ix > 0 && uri.length() > 0 ? qName.substring(0, ix) : "";
+                        prefixMap = prefixes.remove(prefixes.size() - 1);
                         halt = true;
                         break;
                     case processingInstruction:
@@ -132,14 +145,10 @@ class BFOXMLStreamReader implements XMLStreamReader {
                         ix = qName.indexOf(":");
                         prefix = ix > 0 && uri.length() > 0 ? qName.substring(0, ix) : "";
                         if (prefixMap == null) {
-                            prefixMap = prefixes.isEmpty() ? new HashMap<String,String>() : prefixes.get(prefixes.size() - 1);
+                            prefixMap = new HashMap<String,String>();
                         }
                         prefixes.add(prefixMap);
                         prefixMap = null;
-                        halt = true;
-                        break;
-                    case startDocument:
-                        state = START_ELEMENT;
                         halt = true;
                         break;
                     case setDocumentLocator:
@@ -147,15 +156,13 @@ class BFOXMLStreamReader implements XMLStreamReader {
                         break;
                     case startPrefixMapping:
                         if (prefixMap == null) {
-                            prefixMap = prefixes.isEmpty() ? new HashMap<String,String>() : new HashMap<String,String>(prefixes.get(prefixes.size() - 1));
+                            prefixMap = new HashMap<String,String>();
                         }
                         prefix = (String)o[0];
                         uri = (String)o[1];
                         prefixMap.put(prefix, uri);
-                        state = NAMESPACE;
-                        halt = true;
-                        break;
-                    case endPrefixMapping:
+//                        state = NAMESPACE;
+//                        halt = true;
                         break;
                     case warning:
                     case error:
@@ -188,6 +195,17 @@ class BFOXMLStreamReader implements XMLStreamReader {
                             q.reply(null);
                         }
                         break;
+                    case xmlpi:
+                        charset = (String)o[0];
+                        encoding = (String)o[1];
+                        standalone = (String)o[2];
+                        version = (String)o[3];
+                        if (version == null) {
+                            version = "1.0";
+                        }
+                        state = START_DOCUMENT;
+                        halt = true;
+                        break;
                     case close:
                         active = false;         // heard after endDocument on clean exit
                         halt = true;
@@ -197,6 +215,9 @@ class BFOXMLStreamReader implements XMLStreamReader {
                 }
             } finally {
                 q.remove();
+            }
+            if (halt && indtd) {
+                halt = false;
             }
         }
         return state;
@@ -321,7 +342,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
     // Returns the character encoding declared on the xml declaration Returns null if none was declared
     @Override public String getCharacterEncodingScheme() {
         if (state == START_DOCUMENT) {
-            return charEncodingScheme;
+            return charset;
         } else {
             throw new IllegalStateException("Event type "+type(state));
         }
@@ -452,8 +473,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
         } else if (state == START_ELEMENT) {
             return prefixes.get(prefixes.size() - 1).size();
         } else if (state == END_ELEMENT) {
-            // TODO number about to go out of scope
-            return prefixes.get(prefixes.size() - 1).size();
+            return prefixMap.size();
         } else {
             throw new IllegalStateException("Event type "+type(state));
         }
@@ -462,10 +482,14 @@ class BFOXMLStreamReader implements XMLStreamReader {
     // Returns the prefix for the namespace declared at the index.
     @Override public String getNamespacePrefix(int index) {
         if (state == START_ELEMENT || state == END_ELEMENT || state == NAMESPACE) {
-            Map<String,String> m = prefixes.get(prefixes.size() - 1);
+            Map<String,String> m = state == END_ELEMENT ? prefixMap : prefixes.isEmpty() ? Collections.<String,String>emptyMap() : prefixes.get(prefixes.size() - 1);
             for (Map.Entry<String,String> e : m.entrySet()) {
                 if (index-- == 0) {
-                    return e.getKey();
+                    String prefix = e.getKey();
+                    if ("".equals(prefix)) {
+                        prefix = null;
+                    }
+                    return prefix;
                 }
             }
             return null;
@@ -486,7 +510,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
     // Returns the uri for the namespace declared at the index.
     @Override public String getNamespaceURI(int index) {
         if (state == START_ELEMENT || state == END_ELEMENT || state == NAMESPACE) {
-            Map<String,String> m = prefixes.get(prefixes.size() - 1);
+            Map<String,String> m = state == END_ELEMENT ? prefixMap : prefixes.isEmpty() ? Collections.<String,String>emptyMap() : prefixes.get(prefixes.size() - 1);
             for (Map.Entry<String,String> e : m.entrySet()) {
                 if (index-- == 0) {
                     return e.getValue();
@@ -506,11 +530,15 @@ class BFOXMLStreamReader implements XMLStreamReader {
             return XMLConstants.XML_NS_URI;
         } else if (prefix.equals("xmlns")) {
             return XMLConstants.XMLNS_ATTRIBUTE_NS_URI;
-        } else if (prefixes.isEmpty()) {
-            return null;
         } else {
-            Map<String,String> m = prefixes.get(prefixes.size() - 1);
-            return m.get(prefix);
+            for (int i=prefixes.size()-1;i>=0;i--) {
+                Map<String,String> m = prefixes.get(i);
+                String uri = m.get(prefix);
+                if (uri != null) {
+                    return uri;
+                }
+            }
+            return null;
         }
     }
 
@@ -634,7 +662,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
     // Get the standalone declaration from the xml declaration
     @Override public boolean isStandalone() {
         if (state == START_DOCUMENT) {
-            return standalone != null && standalone.booleanValue() == true;
+            return standalone != null && "yes".equals(standalone);
         } else {
             throw new IllegalStateException("Event type "+type(state));
         }

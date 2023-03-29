@@ -15,11 +15,19 @@ abstract class CPReader {
         return -1;
     }
 
+    public int getCharacterOffset() {
+        return -1;
+    }
+
     public String getPublicId() {
         return null;
     }
 
     public String getSystemId() {
+        return null;
+    }
+
+    public String getEncoding() {
         return null;
     }
 
@@ -55,7 +63,7 @@ abstract class CPReader {
     static CPReader normalize(final CPReader reader, boolean fxml11) {
         return new CPReader() {
             private boolean xml11 = fxml11;
-            private int hold = -1, line = 1, column = 1;
+            private int hold = -1, line = 1, column = 1, offset = 0;
 
             @Override public void setXML11(boolean b) {
                 xml11 = b;
@@ -71,6 +79,10 @@ abstract class CPReader {
 
             @Override public String getSystemId() {
                 return reader == null ? null : reader.getSystemId();
+            }
+
+            @Override public String getEncoding() {
+                return reader == null ? null : reader.getEncoding();
             }
 
             @Override public int read() throws SAXException, IOException {
@@ -90,6 +102,7 @@ abstract class CPReader {
                 } else {
                     v = reader.read();
                 }
+                offset++;
                 int out;
                 if (v < 0x20) {
                     if (v == '\r') {
@@ -152,6 +165,10 @@ abstract class CPReader {
             @Override public int getColumnNumber() {
                 return column;
             }
+
+            @Override public int getCharacterOffset() {
+                return offset;
+            }
         };
     }
 
@@ -182,11 +199,17 @@ abstract class CPReader {
             @Override public String getSystemId() {
                 return r == null ? null : r.getSystemId();
             }
+            @Override public String getEncoding() {
+                return r == null ? null : r.getEncoding();
+            }
             @Override public int getLineNumber() {
                 return r == null ? -1 : r.getLineNumber();
             }
             @Override public int getColumnNumber() {
                 return r == null ? -1 : r.getColumnNumber();
+            }
+            @Override public int getCharacterOffset() {
+                return r == null ? -1 : r.getCharacterOffset();
             }
             @Override public void setXML11(boolean xml11) {
                 a.setXML11(xml11);
@@ -201,13 +224,18 @@ abstract class CPReader {
         };
     }
 
+    static CPReader getReader(String s, final String publicId, final String systemId, final int lineNumber, final int column, final boolean xml11) {
+        return getReader(s, publicId, systemId, null, lineNumber, column, 0, xml11);
+    }
+
     /**
      * Return a new CPReader that reads from the CharSequence
      */
-    static CPReader getReader(String s, final String publicId, final String systemId, final int lineNumber, final int column, final boolean xml11) {
+    static CPReader getReader(String s, final String publicId, final String systemId, final String encoding, final int lineNumber, final int column, final int charOffset, final boolean xml11) {
         return new CPReader() {
             int line = lineNumber;
             int col = column;
+            int offset = charOffset;
             int i;
             @Override public int read() {
                 if (i == s.length()) {
@@ -217,6 +245,7 @@ abstract class CPReader {
                     if (c >= 0xd800 && c <= 0xdbff && i < s.length()) {
                         c = fromUTF16(c, s.charAt(i++));
                     }
+                    offset++;
                     if (c == '\n') {
                         line++;
                         col = 1;
@@ -232,11 +261,17 @@ abstract class CPReader {
             @Override public String getSystemId() {
                 return systemId;
             }
+            @Override public String getEncoding() {
+                return encoding;
+            }
             @Override public int getLineNumber() {
                 return lineNumber >= 0 ? line : -1;
             }
             @Override public int getColumnNumber() {
                 return lineNumber >=0 ? col : -1;
+            }
+            @Override public int getCharacterOffset() {
+                return charOffset >=0 ? offset : -1;
             }
             @Override public boolean isXML11() {
                 return xml11;
@@ -253,7 +288,7 @@ abstract class CPReader {
     static CPReader getReader(InputSource in) throws IOException, SAXException {
         try {
             if (in.getCharacterStream() != null) {
-                return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId());
+                return getReader(in.getCharacterStream(), in.getPublicId(), in.getSystemId(), in.getEncoding());
             } else if (in.getByteStream() != null) {
                 return getReader(in.getByteStream(), in.getEncoding(), in.getPublicId(), in.getSystemId());
             } else {
@@ -270,7 +305,7 @@ abstract class CPReader {
     /**
      * Return a new CPReader that reads from the Reader
      */
-    static CPReader getReader(final Reader in, final String publicId, final String systemId) throws IOException, SAXException {
+    static CPReader getReader(final Reader in, final String publicId, final String systemId, final String encoding) throws IOException, SAXException {
         if (in == null) {
             return null;
         }
@@ -299,6 +334,9 @@ abstract class CPReader {
             @Override public String getSystemId() {
                 return systemId;
             }
+            @Override public String getEncoding() {
+                return encoding;
+            }
             @Override public String toString() {
                 if (in instanceof InputStreamReader) {
                     return "{reader+"+((InputStreamReader)in).getEncoding()+" src=" + systemId+"}";
@@ -313,7 +351,7 @@ abstract class CPReader {
      * Return a new CPReader that reads from the InputStream, handling BOM and (if xml), XML encoding
      * @param sourceenc the encoding, as specified externall. Priority is BOM, XML encoding (if specified) and then this
      */
-    private static CPReader getReader(final InputStream in, String sourceenc, final String publicId, final String systemId) throws IOException, SAXException {
+    private static CPReader getReader(final InputStream in, final String sourceenc, final String publicId, final String systemId) throws IOException, SAXException {
         final boolean xml = true;
         byte[] b = new byte[xml ? 80 : 4];
         int len = 0;
@@ -444,6 +482,9 @@ abstract class CPReader {
                 @Override public String getSystemId() {
                     return systemId;
                 }
+                @Override public String getEncoding() {
+                    return sourceenc;
+                }
                 @Override public String toString() {
                     return "{inputstream+UTF-8 src="+systemId+"}";
                 }
@@ -462,14 +503,17 @@ abstract class CPReader {
                 @Override public String getSystemId() {
                     return systemId;
                 }
+                @Override public String getEncoding() {
+                    return sourceenc;
+                }
                 @Override public String toString() {
                     return "{inputstream+ISO-8859-1 src="+systemId+"}";
                 }
             };
         } else {
-            r = getReader(new InputStreamReader(in, enc), publicId, systemId);
+            r = getReader(new InputStreamReader(in, enc), publicId, systemId, sourceenc);
         }
-        CPReader r1 = getReader(prolog, publicId, systemId, 1, 1, false);
+        CPReader r1 = getReader(prolog, publicId, systemId, sourceenc, 1, 1, 0, false);
         return getReader(r1, r, null);
     }
 

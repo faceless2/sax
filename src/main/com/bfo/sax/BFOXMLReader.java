@@ -20,11 +20,11 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
     private boolean standalone;                                 // TODO
     private boolean featureThreads = true;
     private boolean featureNamespaces = true;
+    private boolean featureNamespacePrefixes = false;            // xerces java internal defaults to true
     private boolean featureEntityResolver2 = true;
     private boolean featureLoadExternalDTD = true;
     private boolean featureExternalGeneralEntities = true;
     private boolean featureExternalParameterEntities = true;
-    private boolean featureNamespacePrefixes = true;            // xerces defaults to true
     private boolean featureSecureProcessing = false;
     private boolean featureInternStrings = false;
     private boolean featureCache = true;
@@ -243,6 +243,7 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
         this.xmlStreamReader = xmlStreamReader;
         DefaultHandler2 dh = new DefaultHandler2();
         setContentHandler(dh);
+        lexicalHandler = dh;
         setEntityResolver(dh);
         parse(in);
     }
@@ -1894,6 +1895,7 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
             if (c != '>') {
                 error(reader, "XMLDeclUnterminated");
             }
+            q.xmlpi(reader.getEncoding(), encoding, version, standalone);
         } else {
             if (encoding == null) {
                 error(reader, "EncodingDeclRequired");
@@ -2277,7 +2279,7 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
         // XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'
         // Misc	   ::= Comment | PI | S
         c = reader.read();
-        boolean skip = false;
+        boolean skip = false, xmlpi = false;
         if (c == '<') {
             c = reader.read();
             if (c == '?') {
@@ -2285,13 +2287,18 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
                 String target = readName(reader);
                 if (target.equalsIgnoreCase("xml")) {
                     readXMLPI(reader, true);
+                    xmlpi = true;
                 } else {
                     readPI(reader, target, false);
                 }
                 c = reader.read();
             } else {
+                q.xmlpi(null, null, null, null);
                 skip = true;
             }
+        }
+        if (!xmlpi) {
+            q.xmlpi(null, null, null, null);
         }
         while (c > 0) {
             if (c == '<' || skip) {

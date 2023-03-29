@@ -43,6 +43,9 @@ abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, Erro
        return entityResolver instanceof EntityResolver2;
     }
     abstract void fatalError2(Exception e) throws IOException, SAXException;
+
+    abstract void xmlpi(String charset, String encoding, String standalone, String version) throws IOException, SAXException;
+
     /**
      * Is is safe to reuse buffers?
      */

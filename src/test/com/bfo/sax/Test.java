@@ -7,6 +7,8 @@ import java.nio.file.*;
 import java.nio.file.attribute.*;
 import java.util.concurrent.atomic.*;
 import javax.xml.parsers.*;
+import javax.xml.stream.*;
+import javax.xml.namespace.*;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 import org.xml.sax.helpers.*;
@@ -16,8 +18,9 @@ import com.github.difflib.patch.*;
 public class Test {
 
     private static SAXParserFactory newfactory, oldfactory;
+    private static XMLInputFactory newstaxfactory, oldstaxfactory;
 
-    private boolean newparser, oldparser, decl, lexical, entity, dtd, speed, quiet, large, number, progress;
+    private boolean newparser, oldparser, decl, lexical, entity, dtd, speed, quiet, large, number, progress, stax;
     private Boolean valid;              // expectation or null for none
 
     @SuppressWarnings("unchecked")
@@ -103,7 +106,11 @@ public class Test {
                         try {
                             InputStream in = new BufferedInputStream(new FileInputStream(file));
                             XMLReader r = (old?oldfactory:newfactory).newSAXParser().getXMLReader();
-                            parse(file, r, (old?handlerold:handlernew));
+                            if (stax) {
+                                parseSTAX(file, (old?oldstaxfactory:newstaxfactory), (old?handlerold:handlernew));
+                            } else {
+                                parseSAX(file, old?oldfactory:newfactory, (old?handlerold:handlernew));
+                            }
                         } catch (Exception e) {
                             List<String> list = old ? oldlist : newlist;
                             boolean fail = !list.isEmpty() && list.get(list.size() - 1).startsWith("fatalError");
@@ -190,7 +197,6 @@ public class Test {
         } else {
             long start = System.currentTimeMillis();
             try {
-                XMLReader reader = (newparser?newfactory:oldfactory).newSAXParser().getXMLReader();
                 Callback callback;
                 final MessageDigest digest = large ? MessageDigest.getInstance("SHA-256") : null;
                 if (large) {
@@ -218,7 +224,11 @@ public class Test {
                         }
                     };
                 }
-                parse(file, reader, new MyHandler(callback));
+                if (stax) {
+                    parseSTAX(file, (newparser?newstaxfactory:oldstaxfactory), new MyHandler(callback));
+                } else {
+                    parseSAX(file, (newparser?newfactory:oldfactory), new MyHandler(callback));
+                }
                 if (speed && digest != null) {
                     System.out.println("# success " + fmt(digest.digest()) + " in " + (System.currentTimeMillis() - start) + "ms");
                 } else if (!quiet && digest != null) {
@@ -237,7 +247,13 @@ public class Test {
         }
     }
 
-    private void parse(String file, XMLReader r, DefaultHandler2 handler) throws SAXException, IOException {
+    private void parseSTAX(String file, XMLInputFactory factory, MyHandler handler) throws XMLStreamException, SAXException, IOException {
+        XMLStreamReader r = factory.createXMLStreamReader(file, new BufferedInputStream(new FileInputStream(file)));
+        handler.stax(r);
+    }
+
+    private void parseSAX(String file, SAXParserFactory factory, MyHandler handler) throws ParserConfigurationException, SAXException, IOException {
+        XMLReader r = factory.newSAXParser().getXMLReader();
         r.setContentHandler(handler);
         if (decl) {
             r.setProperty("http://xml.org/sax/properties/declaration-handler", handler);
@@ -428,6 +444,84 @@ public class Test {
             flush();
             msg("warning: " + e);
         }
+
+        void stax(XMLStreamReader r) throws XMLStreamException, SAXException {
+            StringBuilder sb = new StringBuilder();
+            while (r.hasNext()) {
+                int type = r.next();
+                switch (type) {
+                    case XMLStreamConstants.START_DOCUMENT:
+                        msg("startDocument: enc=" + fmt(r.getEncoding()) + " version=" + fmt(r.getVersion()) + " standalone=" + r.isStandalone() + "/" + r.standaloneSet() + " charset=" + fmt(r.getCharacterEncodingScheme()));
+                        break;
+                    case XMLStreamConstants.ATTRIBUTE:
+                        sb.setLength(0);
+                        sb.append("attribute: att=[");
+                        for (int i=0;i<r.getAttributeCount();i++) {
+                            sb.append((i==0?"":", ") + fmt(r.getAttributeName(i))+"="+fmt(r.getAttributeValue(i)));
+                        }
+                        msg(sb.toString());
+                        break;
+                    case XMLStreamConstants.START_ELEMENT:
+                        sb.setLength(0);
+                        sb.append("startEement: " + r.getName());
+                        sb.append(" att=[");
+                        for (int i=0;i<r.getAttributeCount();i++) {
+                            sb.append((i==0?"":", ") + fmt(r.getAttributeName(i))+"="+fmt(r.getAttributeValue(i)));
+                        }
+                        sb.append("] ");
+                        sb.append("ns=[");
+                        for (int i=0;i<r.getNamespaceCount();i++) {
+                            sb.append((i==0?"":", ") + fmt(r.getNamespacePrefix(i))+"="+fmt(r.getNamespaceURI(i)));
+                        }
+                        sb.append("]");
+                        msg(sb.toString());
+                        break;
+                    case XMLStreamConstants.NAMESPACE:
+                        sb.setLength(0);
+                        sb.append("namespace: ns=[");
+                        for (int i=0;i<r.getNamespaceCount();i++) {
+                            sb.append((i==0?"":", ") + fmt(r.getNamespacePrefix(i))+"="+fmt(r.getNamespaceURI(i)));
+                        }
+                        sb.append("]");
+                        msg(sb.toString());
+                        break;
+                    case XMLStreamConstants.END_ELEMENT:
+                        sb.setLength(0);
+                        sb.append("endElement: " + r.getName() + " ns=[");
+                        for (int i=0;i<r.getNamespaceCount();i++) {
+                            sb.append((i==0?"":", ") + fmt(r.getNamespacePrefix(i))+"="+fmt(r.getNamespaceURI(i)));
+                        }
+                        sb.append("]");
+                        msg(sb.toString());
+                        break;
+                    case XMLStreamConstants.CHARACTERS:
+                        msg("characters: " + fmt(r.getText()));
+                        break;
+                    case XMLStreamConstants.CDATA:
+                        msg("cdata: " + fmt(r.getText()));
+                        break;
+                    case XMLStreamConstants.COMMENT:
+                        msg("comment: " + fmt(r.getText()));
+                        break;
+                    case XMLStreamConstants.SPACE:
+                        msg("space: " + fmt(r.getText()));
+                        break;
+                    case XMLStreamConstants.END_DOCUMENT:
+                        msg("endDocument");
+                        break;
+                    case XMLStreamConstants.PROCESSING_INSTRUCTION:
+                        msg("pi " + fmt(r.getPITarget()) + " " + fmt(r.getPIData()));
+                        break;
+                    case XMLStreamConstants.ENTITY_REFERENCE:
+                        msg("entity " + fmt(r.getLocalName()) + " " + fmt(r.getText()));
+                        break;
+                    case XMLStreamConstants.DTD:
+                        msg("dtd");
+                        break;
+                }
+            }
+            r.close();
+        }
     };
 
     private static String fmt(String s) {
@@ -453,6 +547,10 @@ public class Test {
             s = "file:/" + s.substring(8);
         }
         return s;
+    }
+
+    private static String fmt(QName name) {
+        return "{" + name.getNamespaceURI() + "}" + name.getPrefix() + ":" + name.getLocalPart();
     }
 
     private static String fmt(Attributes atts) {
@@ -525,6 +623,7 @@ public class Test {
     public static void main(String[] argsa) throws Exception {
         newfactory = new BFOSAXParserFactory();
         newfactory.setNamespaceAware(true);
+        newstaxfactory = new BFOXMLInputFactory();
 
         List<String> args = new ArrayList<String>(Arrays.asList(argsa));
 
@@ -600,7 +699,7 @@ public class Test {
             args.addAll(l);
         }
 
-        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false, progress = false, dtd = false, entity = false;
+        boolean newparser = true, oldparser = false, decl = false, lexical = false, speed = false, quiet = false, number = false, large = false, progress = false, dtd = false, entity = false, stax = false;
         Boolean valid = null;
 
         final long start = System.currentTimeMillis();
@@ -642,6 +741,8 @@ public class Test {
                 valid = null;
             } else if (arg.equals("--quiet")) {
                 quiet = true;
+            } else if (arg.equals("--stax")) {
+                stax = true;
             } else if (arg.equals("--cache")) {
                 newfactory.setFeature("http://bfo.com/sax/features/cache", true);
             } else if (arg.equals("--nocache")) {
@@ -658,7 +759,9 @@ public class Test {
                 if (oldfactory == null) {
                     oldfactory = SAXParserFactory.newDefaultInstance();
                     oldfactory.setNamespaceAware(true);
+                    oldstaxfactory = XMLInputFactory.newDefaultFactory();
                 }
+                newfactory.setFeature("http://bfo.com/sax/features/threads", false);
                 Test test = new Test();
                 test.newparser = newparser;
                 test.oldparser = oldparser;
@@ -673,6 +776,7 @@ public class Test {
                 test.speed = speed;
                 test.number = number;
                 test.large = large;
+                test.stax = stax;
                 test.valid = valid;
                 test.run(arg);
             }

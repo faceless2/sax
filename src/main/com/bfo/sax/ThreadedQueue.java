@@ -138,12 +138,10 @@ class ThreadedQueue extends Queue {
         now(MsgType.warning, a1);
     }
     @Override public void fatalError(SAXParseException a1) throws SAXException {
-        a1.printStackTrace();
         now(MsgType.fatalError, a1);
         throw a1;       // Won't get this far, because fail will be set.
     }
     @Override public void fatalError2(Exception a1) throws IOException, SAXException {
-        a1.printStackTrace();
         now(MsgType.fatalError, a1);
         throw new SAXException("Unhandled Exception", a1);       // Won't get this far, because fail will be set.
     }
@@ -155,6 +153,10 @@ class ThreadedQueue extends Queue {
         column = locator.getColumnNumber();
         charOffset = this.locator.getCharacterOffset();
         add(MsgType.setDocumentLocator, this);
+    }
+    @Override void xmlpi(String a1, String a2, String a3, String a4) throws IOException, SAXException {
+        
+        add(MsgType.xmlpi, a1, a2, a3, a4);
     }
     void close() {
         add(MsgType.close);
@@ -450,6 +452,8 @@ class ThreadedQueue extends Queue {
                         exchange = true;
                         output = ((EntityResolver2)entityResolver).resolveEntity((String)o[0], (String)o[1], (String)o[2], (String)o[3]);
                         break;
+                    case xmlpi:
+                        break;
                     case close:
                         active = false;         // heard after endDocument on clean exit
                         break;
@@ -491,7 +495,7 @@ class ThreadedQueue extends Queue {
         processingInstruction(2), skippedEntity(1), startDocument(0), startElement(4), startPrefixMapping(2), unparsedEntityDecl(4),
         error(1), warning(1), fatalError(1),
         resolveEntity(2), resolveEntity2(4), getExternalSubset(2),
-        setDocumentLocator(1),
+        setDocumentLocator(1), xmlpi(4),
         close(0);
         final int c;
         MsgType(int c) {

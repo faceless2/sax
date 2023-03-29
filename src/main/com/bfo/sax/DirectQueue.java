@@ -131,4 +131,7 @@ class DirectQueue extends Queue {
             throw new SAXException("Unhandled Exception", exception);
         }
     }
+    @Override void xmlpi(String charset, String encoding, String standalone, String version) throws IOException, SAXException {
+    }
+
 }
