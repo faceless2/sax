@@ -3,16 +3,16 @@ package com.bfo.sax;
 import java.io.*;
 import java.util.*;
 import javax.xml.stream.*;
+import javax.xml.stream.*;
 import javax.xml.stream.util.*;
 import javax.xml.transform.Source;
+import javax.xml.transform.stream.StreamSource;
 import org.xml.sax.*;
 
 public class BFOXMLInputFactory extends XMLInputFactory {
 
     private final BFOSAXParserFactory factory;
-    private Map<String,Object> properties = new HashMap<String,Object>();
-    private XMLResolver resolver;
-    private XMLReporter reporter;
+    private final Map<String,Object> properties;
 
     public BFOXMLInputFactory() {
         try {
@@ -24,34 +24,41 @@ public class BFOXMLInputFactory extends XMLInputFactory {
         } catch (SAXNotSupportedException e) {
             throw new RuntimeException(e);
         }
+        properties = new HashMap<String,Object>();
+        setProperty(IS_NAMESPACE_AWARE, Boolean.TRUE);
+        setProperty(IS_VALIDATING, Boolean.FALSE);
+        setProperty(IS_COALESCING, Boolean.FALSE);
+        setProperty(IS_REPLACING_ENTITY_REFERENCES, Boolean.TRUE);
+        setProperty(IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.TRUE);
+        setProperty(SUPPORT_DTD, Boolean.TRUE);
     }
 
-    public XMLEventReader createFilteredReader(XMLEventReader reader, EventFilter filter) {
-        throw new UnsupportedOperationException();
+    public XMLEventReader createXMLEventReader(InputStream stream) throws XMLStreamException {
+        return createXMLEventReader(createXMLStreamReader(stream));
     }
-    public XMLStreamReader createFilteredReader(XMLStreamReader reader, StreamFilter filter) {
-        throw new UnsupportedOperationException();
+
+    public XMLEventReader createXMLEventReader(InputStream stream, String encoding) throws XMLStreamException {
+        return createXMLEventReader(createXMLStreamReader(stream, encoding));
     }
-    public XMLEventReader createXMLEventReader(InputStream stream) {
-        throw new UnsupportedOperationException();
+
+    public XMLEventReader createXMLEventReader(Reader reader) throws XMLStreamException {
+        return createXMLEventReader(createXMLStreamReader(reader));
     }
-    public XMLEventReader createXMLEventReader(InputStream stream, String encoding) {
-        throw new UnsupportedOperationException();
+
+    public XMLEventReader createXMLEventReader(String systemId, InputStream stream) throws XMLStreamException {
+        return createXMLEventReader(createXMLStreamReader(systemId, stream));
     }
-    public XMLEventReader createXMLEventReader(Reader reader) {
-        throw new UnsupportedOperationException();
+
+    public XMLEventReader createXMLEventReader(String systemId, Reader reader) throws XMLStreamException {
+        return createXMLEventReader(createXMLStreamReader(systemId, reader));
     }
-    public XMLEventReader createXMLEventReader(String systemId, InputStream stream) {
-        throw new UnsupportedOperationException();
-    }
-    public XMLEventReader createXMLEventReader(String systemId, Reader reader) {
-        throw new UnsupportedOperationException();
-    }
-    public XMLEventReader createXMLEventReader(XMLStreamReader reader) throws XMLStreamException {
-        throw new UnsupportedOperationException();
-    }
+
     public XMLEventReader createXMLEventReader(Source source) throws XMLStreamException {
-        throw new UnsupportedOperationException();
+        return createXMLEventReader(createXMLStreamReader(source));
+    }
+
+    public XMLEventReader createXMLEventReader(XMLStreamReader reader) throws XMLStreamException {
+        return new BFOXMLEventReader(this, reader);
     }
 
     public XMLStreamReader createXMLStreamReader(InputStream stream) throws XMLStreamException {
@@ -70,6 +77,22 @@ public class BFOXMLInputFactory extends XMLInputFactory {
         return createXMLStreamReader(systemId, stream, null);
     }
 
+    public XMLStreamReader createXMLStreamReader(Source source) throws XMLStreamException {
+        if (source instanceof StreamSource) {
+            StreamSource s = (StreamSource)source;
+            String systemId = s.getSystemId();
+            String publicId = s.getPublicId();
+            InputStream stream = s.getInputStream();
+            Reader reader = s.getReader();
+            if (stream != null) {
+                return createXMLStreamReader(systemId, stream);
+            } else if (reader != null) {
+                return createXMLStreamReader(systemId, reader);
+            }
+        }
+        throw new UnsupportedOperationException();
+    }
+
     private XMLStreamReader createXMLStreamReader(String systemId, InputStream stream, String encoding) throws XMLStreamException {
         InputSource source = new InputSource(stream);
         source.setSystemId(systemId);
@@ -78,6 +101,7 @@ public class BFOXMLInputFactory extends XMLInputFactory {
         try {
             BFOXMLStreamReader xmlreader = new BFOXMLStreamReader(this, properties);
             r = (BFOXMLReader)factory.newSAXParser().getXMLReader();
+            r.setFeature("http://xml.org/sax/features/namespaces", getProperty(IS_NAMESPACE_AWARE).equals(Boolean.TRUE));
             r.parse(source, xmlreader);
             return xmlreader;
         } catch (Exception e) {
@@ -92,6 +116,7 @@ public class BFOXMLInputFactory extends XMLInputFactory {
         try {
             BFOXMLStreamReader xmlreader = new BFOXMLStreamReader(this, properties);
             r = (BFOXMLReader)factory.newSAXParser().getXMLReader();
+            r.setFeature("http://xml.org/sax/features/namespaces", getProperty(IS_NAMESPACE_AWARE).equals(Boolean.TRUE));
             r.parse(source, xmlreader);
             return xmlreader;
         } catch (Exception e) {
@@ -99,11 +124,8 @@ public class BFOXMLInputFactory extends XMLInputFactory {
         }
     }
 
-    public XMLStreamReader createXMLStreamReader(Source source) {
-        throw new UnsupportedOperationException();
-    }
     public XMLEventAllocator getEventAllocator() {
-        throw new UnsupportedOperationException();
+        return (XMLEventAllocator)getProperty(ALLOCATOR);
     }
 
     public Object getProperty(String name) {
@@ -111,31 +133,95 @@ public class BFOXMLInputFactory extends XMLInputFactory {
     }
 
     public XMLReporter getXMLReporter() {
-        return reporter;
+        return (XMLReporter)getProperty(REPORTER);
     }
 
     public XMLResolver getXMLResolver() {
-        return resolver;
+        return (XMLResolver)getProperty(RESOLVER);
     }
 
     public boolean isPropertySupported(String name) {
-        return false;
+        switch (name) {
+            case ALLOCATOR:
+            case IS_COALESCING:
+            case IS_NAMESPACE_AWARE:
+            case IS_REPLACING_ENTITY_REFERENCES:
+            case IS_SUPPORTING_EXTERNAL_ENTITIES:
+            case IS_VALIDATING:
+            case REPORTER:
+            case RESOLVER:
+            case SUPPORT_DTD:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public void setEventAllocator(XMLEventAllocator allocator) {
-        throw new UnsupportedOperationException();
+        setProperty(ALLOCATOR, allocator);
     }
 
     public void setProperty(String name, Object value) {
+        if (ALLOCATOR.equals(name)) {
+            if (value != null && !(value instanceof XMLEventAllocator)) {
+                throw new IllegalArgumentException("Not an XMLEventAllocator");
+            }
+        } else if (IS_COALESCING.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            }
+        } else if (IS_NAMESPACE_AWARE.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            }
+        } else if (IS_REPLACING_ENTITY_REFERENCES.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            }
+        } else if (IS_SUPPORTING_EXTERNAL_ENTITIES.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            }
+        } else if (IS_VALIDATING.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            } else if (value.equals(Boolean.TRUE)) {
+                throw new IllegalArgumentException("Only false supported");
+            }
+        } else if (REPORTER.equals(name)) {
+            if (value != null && !(value instanceof XMLReporter)) {
+                throw new IllegalArgumentException("Not an XMLReporter");
+            }
+        } else if (RESOLVER.equals(name)) {
+            if (value != null && !(value instanceof XMLResolver)) {
+                throw new IllegalArgumentException("Not an XMLResolver");
+            }
+        } else if (SUPPORT_DTD.equals(name)) {
+            if (!(value instanceof Boolean)) {
+                throw new IllegalArgumentException("Not a Boolean");
+            }
+        } else {
+            throw new IllegalArgumentException("Unrecognised property \"" + name + "\"");
+        }
         properties.put(name, value);
     }
 
     public void setXMLReporter(XMLReporter reporter) {
-        this.reporter = reporter;
+        setProperty(REPORTER, reporter);
     }
 
     public void setXMLResolver(XMLResolver resolver) {
-        this.resolver = resolver;
+        setProperty(RESOLVER, resolver);
+    }
+
+    // Last two methods unsupported
+
+    public XMLEventReader createFilteredReader(XMLEventReader reader, EventFilter filter) throws XMLStreamException {
+        throw new UnsupportedOperationException();
+    }
+
+    public XMLStreamReader createFilteredReader(XMLStreamReader reader, StreamFilter filter) throws XMLStreamException {
+        throw new UnsupportedOperationException();
     }
 
 }
