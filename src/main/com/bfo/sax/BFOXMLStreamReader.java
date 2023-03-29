@@ -420,8 +420,14 @@ class BFOXMLStreamReader implements XMLStreamReader {
                 } else if (prefix.equals("xmlns")) {
                     return XMLConstants.XMLNS_ATTRIBUTE_NS_URI;
                 } else {
-                    String s = prefixes.isEmpty() ? null : prefixes.get(prefixes.size() - 1).get(prefix);
-                    return s != null ? s : "";
+                    for (int i=prefixes.size()-1;i>=0;i--) {
+                        Map<String,String> m = prefixes.get(i);
+                        String uri = m.get(prefix);
+                        if (uri != null) {
+                            return uri;
+                        }
+                    }
+                    return null;
                 }
             }
             @Override public String getPrefix(String uri) {
@@ -431,13 +437,13 @@ class BFOXMLStreamReader implements XMLStreamReader {
                     return "xml";
                 } else if (uri.equals(XMLConstants.XMLNS_ATTRIBUTE_NS_URI)) {
                     return "xmlns";
-                } else if (prefixes.isEmpty()) {
-                    return null;
                 } else {
-                    Map<String,String> m = prefixes.get(prefixes.size() - 1);
-                    for (Map.Entry<String,String> e : m.entrySet()) {
-                        if (e.getValue().equals(uri)) {
-                            return e.getKey();
+                    for (int i=prefixes.size()-1;i>=0;i--) {
+                        Map<String,String> m = prefixes.get(i);
+                        for (Map.Entry<String,String> e : m.entrySet()) {
+                            if (e.getValue().equals(uri)) {
+                                return e.getKey();
+                            }
                         }
                     }
                     return null;
@@ -454,10 +460,15 @@ class BFOXMLStreamReader implements XMLStreamReader {
                     return Collections.<String>emptyList().iterator();
                 } else {
                     List<String> out = new ArrayList<String>();
-                    Map<String,String> m = prefixes.get(prefixes.size() - 1);
-                    for (Map.Entry<String,String> e : m.entrySet()) {
-                        if (e.getValue().equals(uri)) {
-                            out.add(e.getKey());
+                    Set<String> seen = new HashSet<String>();
+                    for (int i=prefixes.size()-1;i>=0;i--) {
+                        Map<String,String> m = prefixes.get(i);
+                        for (Map.Entry<String,String> e : m.entrySet()) {
+                            if (e.getValue().equals(uri) && !seen.contains(e.getKey())) {
+                                out.add(e.getKey());
+                            } else {
+                                seen.add(e.getKey());
+                            }
                         }
                     }
                     return out.iterator();
