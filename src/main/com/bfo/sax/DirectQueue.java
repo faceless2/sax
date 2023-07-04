@@ -5,7 +5,7 @@ import org.xml.sax.ext.*;
 import java.io.IOException;
 
 class DirectQueue extends Queue {
-    private Locator locator;
+    private Locator2 locator;
 
     DirectQueue(ContentHandler contentHandler, DeclHandler declHandler, DTDHandler dtdHandler, EntityResolver entityResolver, ErrorHandler errorHandler, LexicalHandler lexicalHandler) {
         super(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
@@ -15,7 +15,7 @@ class DirectQueue extends Queue {
         return true;
     }
     @Override public void setDocumentLocator(Locator locator) {
-        this.locator = locator;
+        this.locator = (Locator2)locator;
         contentHandler.setDocumentLocator(locator);
     }
     @Override public String getPublicId() {
@@ -29,6 +29,12 @@ class DirectQueue extends Queue {
     }
     @Override public int getColumnNumber() {
         return locator.getColumnNumber();
+    }
+    @Override public String getEncoding() {
+        return locator.getEncoding();
+    }
+    @Override public String getXMLVersion() {
+        return locator.getXMLVersion();
     }
     @Override public int getCharacterOffset() {
         return -1;

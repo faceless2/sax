@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.xml.stream.Location;
 
 class ThreadedQueue extends Queue {
-    private String publicId, systemId;
+    private String publicId, systemId, encoding, xmlversion;
     private int line, column, charOffset;
     private final Rec[] q;
     private final ReentrantLock lock;
@@ -44,6 +44,12 @@ class ThreadedQueue extends Queue {
     }
     @Override public int getColumnNumber() {
         return column;
+    }
+    @Override public String getEncoding() {
+        return encoding;
+    }
+    @Override public String getXMLVersion() {
+        return xmlversion;
     }
     @Override public int getCharacterOffset() {
         return charOffset;
@@ -151,6 +157,8 @@ class ThreadedQueue extends Queue {
         systemId = locator.getSystemId();
         line = locator.getLineNumber();
         column = locator.getColumnNumber();
+        encoding = ((Locator2)locator).getEncoding();
+        xmlversion = ((Locator2)locator).getXMLVersion();
         charOffset = this.locator.getCharacterOffset();
         add(MsgType.setDocumentLocator, this);
     }
@@ -172,6 +180,10 @@ class ThreadedQueue extends Queue {
         sb.append(getLineNumber());
         sb.append(",\"column\":");
         sb.append(getColumnNumber());
+        sb.append(",\"encoding\":");
+        sb.append(getEncoding());
+        sb.append(",\"xmlversion\":");
+        sb.append(getXMLVersion());
         sb.append(",\"class\":\"com.bfo.sax.ThreadedQueue\",\"queued\":"+count+"}");
         /*
         for (int i=0;i<count;i++) {
@@ -247,6 +259,8 @@ class ThreadedQueue extends Queue {
             r.systemId = locator.getSystemId();
             r.line = locator.getLineNumber();
             r.column = locator.getColumnNumber();
+            r.encoding = ((Locator2)locator).getEncoding();
+            r.xmlversion = ((Locator2)locator).getXMLVersion();
             r.charOffset = locator.getCharacterOffset();
             System.arraycopy(o, 0, r.o, 0, o.length);
             if (++putIndex == q.length) {
@@ -277,6 +291,8 @@ class ThreadedQueue extends Queue {
             systemId = rec.systemId;
             line = rec.line;
             column = rec.column;
+            encoding = rec.encoding;
+            xmlversion = rec.xmlversion;
             for (int i=type.c-1;i>=0;i--) {
                 out[i] = rec.o[i];
             }
@@ -505,7 +521,7 @@ class ThreadedQueue extends Queue {
 
     private static class Rec {
         MsgType type;
-        String publicId, systemId;
+        String publicId, systemId, encoding, xmlversion;
         int line, column, charOffset;
         final Object[] o = new Object[5];
     }

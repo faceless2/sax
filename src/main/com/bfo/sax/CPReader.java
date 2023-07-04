@@ -277,7 +277,7 @@ abstract class CPReader {
                 return xml11;
             }
             @Override public String toString() {
-                return "{string val="+BFOXMLReader.fmt(s)+" src="+systemId+" line="+getLineNumber()+" col="+getColumnNumber()+"}";
+                return "{string val="+BFOXMLReader.fmt(s)+" src="+systemId+" line="+getLineNumber()+" col="+getColumnNumber()+" enc="+encoding+"}";
             }
         };
     }
@@ -402,9 +402,9 @@ abstract class CPReader {
             }
         }
 
-        String enc = null;
+        String enc = null, publicenc = null;
         if (bomenc != null) {
-            enc = bomenc;
+            enc = publicenc = bomenc;
         } else {
             // If it's XML, use the encoding attribute if specified (fail if invalid), or utf-8
             // If it's anything else, use the source encoding if specified, or utf-8
@@ -412,16 +412,18 @@ abstract class CPReader {
                 enc = "shift-jis".equalsIgnoreCase(xmlenc) || "shift_jis".equalsIgnoreCase(xmlenc) ? "windows-31j" : xmlenc;
                 try {
                     enc = Charset.forName(enc).name();
+                    publicenc = xmlenc;
                 } catch (Exception e) {
                     throw new SAXParseException("Unsupported encoding \"" + xmlenc + "\"", publicId, systemId, -1, -1);
                 }
             } else if (xml) {
-                enc = "UTF-8";
+                enc = publicenc = "UTF-8";
             } else if (sourceenc != null) {
                 enc = "shift-jis".equalsIgnoreCase(sourceenc) || "shift_jis".equalsIgnoreCase(sourceenc) ? "windows-31j" : sourceenc;
                 boolean supported = false;
                 try {
                     enc = Charset.forName(enc).name();
+                    publicenc = sourceenc;
                 } catch (Exception e) {
                     enc = "UTF-8";
                 }
@@ -483,7 +485,7 @@ abstract class CPReader {
                     return systemId;
                 }
                 @Override public String getEncoding() {
-                    return sourceenc;
+                    return "UTF-8";
                 }
                 @Override public String toString() {
                     return "{inputstream+UTF-8 src="+systemId+"}";
@@ -504,16 +506,16 @@ abstract class CPReader {
                     return systemId;
                 }
                 @Override public String getEncoding() {
-                    return sourceenc;
+                    return "ISO-8859-1";
                 }
                 @Override public String toString() {
                     return "{inputstream+ISO-8859-1 src="+systemId+"}";
                 }
             };
         } else {
-            r = getReader(new InputStreamReader(in, enc), publicId, systemId, sourceenc);
+            r = getReader(new InputStreamReader(in, enc), publicId, systemId, publicenc);
         }
-        CPReader r1 = getReader(prolog, publicId, systemId, sourceenc, 1, 1, 0, false);
+        CPReader r1 = getReader(prolog, publicId, systemId, publicenc, 1, 1, 0, false);
         return getReader(r1, r, null);
     }
 

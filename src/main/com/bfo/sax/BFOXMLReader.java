@@ -10,7 +10,7 @@ import javax.xml.stream.Location;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 
-public class BFOXMLReader implements XMLReader, Locator, Location {
+public class BFOXMLReader implements XMLReader, Locator2, Location {
 
     final Logger cachelog = Logger.getLogger("com.bfo.sax.Cache");
     private int c, len;
@@ -221,6 +221,14 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
         return curreader != null ? curreader.getSystemId() : null;
     }
 
+    @Override public String getEncoding() {
+        return curreader != null ? curreader.getEncoding() : null;
+    }
+
+    @Override public String getXMLVersion() {
+        return curreader != null ? curreader.isXML11() ? "1.1" : "1.0" : null;
+    }
+
     @Override public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"publicid\":");
@@ -231,6 +239,10 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
         sb.append(getLineNumber());
         sb.append(",\"column\":");
         sb.append(getColumnNumber());
+        sb.append(",\"encoding\":");
+        sb.append(getEncoding());
+        sb.append(",\"xmlversion\":");
+        sb.append(getXMLVersion());
         sb.append(",\"class\":\"");
         sb.append(getClass().getName());
         sb.append("\"}");
@@ -1011,9 +1023,9 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
                             }
                         }
                     } else if (c == '<') {
-                        error(reader, "LessthanInAttValue", attName, elementName);
+                        error(reader, "LessthanInAttValue", elementName, attName);
                     } else if (c < 0) {
-                        error(reader, "AttributeValueUnterminated", attName);
+                        error(reader, "AttributeValueUnterminated", elementName, attName);
                     } else if (isS(c)) {
                         append(' ');
                     } else {
@@ -1028,7 +1040,7 @@ public class BFOXMLReader implements XMLReader, Locator, Location {
                     return null;
                 }
             } else {
-                return error(reader, "QuoteRequiredInAttValue", attName);
+                return error(reader, "QuoteRequiredInAttValue", elementName, attName);
             }
         } finally {
             toggleParameterEntityExpansion(reader, expanding);

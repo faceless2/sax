@@ -5,7 +5,7 @@ import org.xml.sax.ext.*;
 import javax.xml.stream.Location;
 import java.io.IOException;
 
-abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, ErrorHandler, EntityResolver2, DeclHandler, Locator, Location {
+abstract class Queue implements ContentHandler, LexicalHandler, DTDHandler, ErrorHandler, EntityResolver2, DeclHandler, Locator2, Location {
     final ContentHandler contentHandler;
     final DTDHandler dtdHandler;
     final DeclHandler declHandler;
