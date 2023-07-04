@@ -47,7 +47,7 @@ The XMLReader and its SAXParserFactory accept the following properties:
 The Jar includes an `XMLInputFactory` which can create an `XMLStreamReader`. This is built on the
 SAX parser code so has the same speed benefits.
 
-However the implementation shipping with Java 17 seems to have many bugs, so testing for API compliance
+The implementation shipping with Java 17 seems to have many bugs, so testing for API compliance
 is much harder. The `XMLEventReader` interface is there but untested, however as it's simply the
 addition of vast amounts of boilerplate code around `XMLStreamReader` it's likely to work to the same level.
 
