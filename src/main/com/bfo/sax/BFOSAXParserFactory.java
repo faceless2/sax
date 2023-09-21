@@ -253,7 +253,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                 }
                 return source;
             } catch  (MalformedURLException e) {
-                throw new IOException("Invalid absolute URL " + BFOXMLReader.fmt(resolvedSystemId));
+                throw new IOException("Invalid absolute URL " + BFOXMLReader.fmt(resolvedSystemId), e);
             }
         }
         return null;
@@ -278,15 +278,12 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         }
         try {
             String out;
-            if (base == null) {
-                out = systemid;
-            } else {
-                URI uri = new URI(base);
-                if (!uri.isAbsolute()) {
-                    uri = new File("").toURI().resolve(uri);
-                }
-                out = uri.resolve(systemid).toString();
+            URI uri = new File("").toURI();
+            if (base != null && base.length() > 0) {
+                uri = uri.resolve(base);
             }
+            uri = uri.resolve(systemid);
+            out = uri.toString();
             return out;
         } catch (RuntimeException e) {
             throw e;

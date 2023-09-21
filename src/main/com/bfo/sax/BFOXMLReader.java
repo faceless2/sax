@@ -275,7 +275,7 @@ public class BFOXMLReader implements XMLReader, Locator2, Location {
             maxGeneralEntityExpansionCount = 100000;
         }
         if (in.getSystemId() != null) {
-            String systemId = factory.resolve("", in.getSystemId());
+            String systemId = factory.resolve(null, in.getSystemId());
             if (!systemId.equals(in.getSystemId())) {
                 InputSource in2 = new InputSource(systemId);
                 in2.setPublicId(in.getPublicId());
