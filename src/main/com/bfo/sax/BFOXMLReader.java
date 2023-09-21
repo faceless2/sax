@@ -397,6 +397,29 @@ public class BFOXMLReader implements XMLReader, Locator2, Location {
         internMap.clear();
     }
 
+    /**
+     * Return whether the XML is standalone or not. Requires
+     * standalone="no" (the default) and a DTD with a systemid
+     * This affects
+     *
+     * -- attributes with default values, if elements to which these attributes apply appear in
+     *    the document without specifications of values for these attributes
+     * -- entities (other than amp, lt, gt, apos, quot), if references to those entities appear
+     *    in the document
+     * -- attributes with tokenized types, where the attribute appears in the document with a
+     *    value such that normalization will produce a different value from that which would be
+     *    produced in the absence of the declaration
+     * -- element types with element content, if white space occurs directly within any instance
+     *    of those types.
+     *
+     * The only one that really matters is the entity one
+     *
+     { See https://www.w3.org/TR/xml/#sec-rmd
+     */
+    private boolean isStandalone() {
+        return standalone || dtd == null || dtd.getSystemId() == null;
+    }
+
     private static class Context {
         String name;
         Context parent;
@@ -2508,7 +2531,12 @@ public class BFOXMLReader implements XMLReader, Locator2, Location {
                 if (entity.isCharacter()) {
                     append(entity.getValue());
                 } else if (entity.isInvalid()) {
-                    error(reader, "EntityNotDeclared", "&" + entity.getName() + ";");
+                    // Invalid entries are accepted by Xerces if !standalone && dtd.getSystemId() != null
+                    if (isStandalone()) {
+                        error(reader, "EntityNotDeclared", "&" + entity.getName() + ";");
+                    } else if (q.isContentHandler()) {
+                        q.skippedEntity(entity.getName());
+                    }
                 } else {
                     if (q.isLexicalHandler()) {
                         q.startEntity(entity.getName());
