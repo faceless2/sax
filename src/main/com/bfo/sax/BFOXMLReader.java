@@ -10,7 +10,7 @@ import javax.xml.stream.Location;
 import org.xml.sax.*;
 import org.xml.sax.ext.*;
 
-public class BFOXMLReader implements XMLReader, Locator2, Location {
+class BFOXMLReader implements XMLReader, Locator2, Location {
 
     final Logger cachelog = Logger.getLogger("com.bfo.sax.Cache");
     private int c, len;
@@ -414,7 +414,7 @@ public class BFOXMLReader implements XMLReader, Locator2, Location {
      *
      * The only one that really matters is the entity one
      *
-     { See https://www.w3.org/TR/xml/#sec-rmd
+     * See https://www.w3.org/TR/xml/#sec-rmd
      */
     private boolean isStandalone() {
         return standalone || dtd == null || dtd.getSystemId() == null;

@@ -1,7 +1,7 @@
 package com.bfo.sax;
 
 import java.security.MessageDigest;
-import java.net.URL;
+import java.net.URI;
 import java.util.*;
 import org.xml.sax.ext.*;
 
@@ -17,7 +17,7 @@ class DTD {
     DTD(BFOSAXParserFactory factory, String name, String publicId, String baseurl, String systemId) {
         if (baseurl != null && systemId != null) {
             try {
-                baseurl = new URL(new URL(baseurl), systemId).toString();
+                baseurl = new URI(baseurl).resolve(systemId).toString();
             } catch (Exception e) {}
         } else if (systemId != null) {
             baseurl = systemId;

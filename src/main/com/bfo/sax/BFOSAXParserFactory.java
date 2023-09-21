@@ -41,7 +41,15 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
 
     /**
+     * Create a new BFOSAXParserFactory
+     */
+    public BFOSAXParserFactory() {
+        super();
+    }
+
+    /**
      * Return the list of features that are recognised by this factory
+     * @return an unmodifiable List of supported features
      */
     public List<String> getSupportedFeatures() {
         List<String> l = new ArrayList<String>();
@@ -63,6 +71,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     /**
      * Return the list of properties that are recognised by this factory
+     * @return an unmodifiable List of supported properties
      */
     public List<String> getSupportedProperties() {
         List<String> l = new ArrayList<String>();
@@ -141,7 +150,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
         }
         if (resolvedSystemId != null) {
             try {
-                final URL furl = new URL(resolvedSystemId);
+                final URL furl = new URI(resolvedSystemId).toURL();
                 String scheme = furl.getProtocol();
                 String urn = null;
 
@@ -212,7 +221,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                                         if (location == null) {
                                             throw new IOException("Invalid " + code + "redirect (no Location)");
                                         }
-                                        URL url2 = new URL(url, location);
+                                        URL url2 = url.toURI().resolve(location).toURL();
                                         String scheme = url2 == null ? null : url2.getProtocol();
                                         if (!"http".equals(scheme) && !"https".equals(scheme)) {
                                             throw new IOException("Invalid " + code + "redirect to \"" + location + "\"");
@@ -231,6 +240,8 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                                 setByteStream(in);
                             }
                             return in;
+                        } catch (URISyntaxException e) {
+                            throw new RuntimeException(e);
                         } catch (IOException e) {
                             // This will be unpacked and thrown on as IOException
                             throw new RuntimeException(e);
@@ -252,7 +263,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
                     }
                 }
                 return source;
-            } catch  (MalformedURLException e) {
+            } catch  (URISyntaxException e) {
                 throw new IOException("Invalid absolute URL " + BFOXMLReader.fmt(resolvedSystemId), e);
             }
         }
@@ -323,6 +334,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
      * Public ID from this map will be redirected to the corresponding URL, and
      * the specified System Id will be ignored.
      * If the URL cannot be resolved, an error will be thrown.
+     * @return a Map of public IDs to URLs, which can be modified
      */
     public Map<String,String> getPublicIdMap() {
         return publicIdMap;
@@ -331,6 +343,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
     /**
      * Set the {@link ExecutorService} which XML parsing threads should run,
      * or <code>null</code> to simply create Threads as needed
+     * @param service the ExecutorService
      */
     public void setExecutorService(ExecutorService service) {
         this.executorService = service;
@@ -338,7 +351,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     /**
      * Set the size of the DTD Cache. The default value is 50. The minimum size is 5
-     * @param cache size the cache size
+     * @param size the cache size
      */
     public void setDTDCacheSize(int size) {
         this.dtdCacheSize = Math.max(5, size);
@@ -346,7 +359,7 @@ public class BFOSAXParserFactory extends SAXParserFactory {
 
     /**
      * Set the size of the External Entity Cache. The default value is 50. The minimum size is 5
-     * @param cache size the cache size
+     * @param size the cache size
      */
     public void setEntityCacheSize(int size) {
         this.entityCacheSize = Math.max(5, size);

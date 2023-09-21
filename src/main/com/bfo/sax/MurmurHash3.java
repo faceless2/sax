@@ -12,7 +12,7 @@ import java.nio.ByteOrder;
  * http://murmurhash.shorelabs.com
  * 64-bit value derived from xor of 128bit value
  */
-public class MurmurHash3 implements Checksum {
+class MurmurHash3 implements Checksum {
 
     private static final int X86_32_C1 = 0xcc9e2d51;
     private static final int X86_32_C2 = 0x1b873593;
