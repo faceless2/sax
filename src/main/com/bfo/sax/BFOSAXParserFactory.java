@@ -293,8 +293,12 @@ public class BFOSAXParserFactory extends SAXParserFactory {
             if (base != null && base.length() > 0) {
                 uri = uri.resolve(base);
             }
-            uri = uri.resolve(systemid);
-            out = uri.toString();
+            try {
+                uri = uri.resolve(systemid);
+                out = uri.toString();
+            } catch (Exception e) {
+                out = systemid; // Whatever it is, it's probably opaque. 
+            }
             return out;
         } catch (RuntimeException e) {
             throw e;
