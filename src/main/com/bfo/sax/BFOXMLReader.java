@@ -202,8 +202,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
     }
 
     @Override public int getCharacterOffset() {
-        // return curreader != null ? curreader.getCharacterOffset() : -1;
-        return -1;
+        return curreader != null ? curreader.getCharacterOffset() : -1;
     }
     @Override public int getColumnNumber() {
         return curreader != null ? curreader.getColumnNumber() : -1;
@@ -302,7 +301,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                 }
             };
         }
-        curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
+        curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), null, 1, 1, 0, false);
 
         try {
             parameterEntityExpansionCount = generalEntityExpansionCount = 0;
@@ -320,7 +319,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                                     tq.setDocumentLocator(BFOXMLReader.this);
                                     tq.startDocument();
                                 }
-                                curreader = CPReader.normalize(CPReader.getReader(fin), false);
+                                curreader = CPReader.getReader(fin, true, null);
                                 readDocument(curreader);
                                 if (tq.isContentHandler()) {
                                     tq.endDocument();
@@ -363,13 +362,12 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
             } else {
                 q = new DirectQueue(contentHandler, declHandler, dtdHandler, entityResolver, errorHandler, lexicalHandler);
 
-                curreader = CPReader.getReader("", in.getPublicId(), in.getSystemId(), 1, 1, false);
                 try {
                     if (q.isContentHandler()) {
                         q.setDocumentLocator(this);
                         q.startDocument();
                     }
-                    curreader = CPReader.normalize(CPReader.getReader(in), false);
+                    curreader = CPReader.getReader(in, true, null);
                     readDocument(curreader);
                     if (q.isContentHandler()) {
                         q.endDocument();
@@ -837,6 +835,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
      */
     private Entity readReference(final CPReader reader) throws SAXException, IOException {
         c = reader.read();
+
         Entity entity = null;
         if (c == '#') {
             c = reader.read();
@@ -1171,6 +1170,8 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
             final int start = len;
             final int line = reader.getLineNumber();
             final int col = reader.getColumnNumber();
+            final int offset = reader.getCharacterOffset();
+            final String encoding = reader.getEncoding();
             int depth = 1;
             while ((c=reader.read()) >= 0) {
                 if (c == '<') {
@@ -1193,7 +1194,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                             if (depth == 0) {
                                 String input = newString(start);
                                 len = start;
-                                return CPReader.getReader(input, reader.getPublicId(), reader.getSystemId(), line, col, reader.isXML11());
+                                return CPReader.getReader(input, reader.getPublicId(), reader.getSystemId(), encoding, line, col, offset, reader.isXML11());
                             } else {
                                 append(']');
                                 append(']');
@@ -1296,6 +1297,8 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
             c = reader.read();
             final int line = reader.getLineNumber();
             final int col = reader.getColumnNumber();
+            final int offset = reader.getCharacterOffset();
+            final String encoding = reader.getEncoding();
             StringBuilder sb = new StringBuilder();
             int quote = 0;
             final int start = len;
@@ -1343,7 +1346,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                 error(reader, "Bad token " + hex(c));
             }
             internalSubsetSource = sb.toString();
-            internalSubset = CPReader.getReader(internalSubsetSource, reader.getPublicId(), reader.getSystemId(), line, col, reader.isXML11());
+            internalSubset = CPReader.getReader(internalSubsetSource, reader.getPublicId(), reader.getSystemId(), encoding, line, col, offset, reader.isXML11());
             c = reader.read();
             if (isS(c)) {
                 readS(reader);
@@ -1446,7 +1449,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                 }
                 dtd = cacheddtd;
             } else if (source != null) {
-                dtdreader = CPReader.normalize(CPReader.getReader(source), reader.isXML11());
+                dtdreader = CPReader.getReader(source, true, reader.isXML11());
             }
         }
         if (!dtd.isClosed()) {
@@ -1628,8 +1631,9 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
             readS(reader);
         }
         if (c == '"' || c == '\'') {
-            int line = reader.getLineNumber();
-            int col = reader.getColumnNumber();
+            final int line = reader.getLineNumber();
+            final int col = reader.getColumnNumber();
+            final int offset = reader.getCharacterOffset();
             String value = readEntityValue(reader, c);
             if (q.isDeclHandler()) {
                 q.internalEntityDecl(name, value);
@@ -1639,7 +1643,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                 // for eg nbsp, this will be quicker, and won't risk hitting limits
                 entity = Entity.createSimple(name, value);
             } else {
-                entity = Entity.createInternal(name, value, reader.getPublicId(), reader.getSystemId(), line, col);
+                entity = Entity.createInternal(name, value, reader.getPublicId(), reader.getSystemId(), reader.getEncoding(), line, col, offset);
             }
             dtd.addEntity(entity);
             c = reader.read();
@@ -2528,6 +2532,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                 //  DTDHandler be properly ordered."
                 // But Xerces doesn't do this, see samples/xmlconf/xmltest/valid/ext-sa/014.xml
                 Entity entity = readReference(reader);
+                
                 if (entity.isCharacter()) {
                     append(entity.getValue());
                 } else if (entity.isInvalid()) {
@@ -2637,7 +2642,7 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
         final boolean xml11 = reader.isXML11();
         CPReader out = null;
         if (entity.getValue() != null) {
-            out = CPReader.getReader(entity.getValue(), entity.getPublicId(), entity.getSystemId(), entity.getLineNumber(), entity.getColumnNumber(), xml11);
+            out = CPReader.getReader(entity.getValue(), entity.getPublicId(), entity.getSystemId(), entity.getEncoding(), entity.getLineNumber(), entity.getColumnNumber(), entity.getCharacterOffset(), xml11);
         } else {
             InputSource source = getExternalEntityInputSource(reader, entity);
             if (source != null) {
@@ -2649,18 +2654,18 @@ class BFOXMLReader implements XMLReader, Locator2, Location {
                         cachelog.fine("Cache entityget(" + urn + ") " + (value == null ? "miss":"hit"));
                     }
                     if (value != null) {
-                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), -1, -1, xml11);
+                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), entity.getEncoding(), -1, -1, 0, xml11);
                     }
                 }
                 if (out == null) {
-                    out = CPReader.normalize(CPReader.getReader(source), xml11);
+                    out = CPReader.getReader(source, false, xml11);
                     if (urn != null) {
                         String value = out.asString();
                         if (cachelog.isLoggable(Level.FINE)) {
                             cachelog.fine("Cache entityput(" + urn + ")");
                         }
                         factory.getCache().putEntity(urn, xml11, value);
-                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), -1, -1, xml11);
+                        out = CPReader.getReader(value, entity.getPublicId(), entity.getSystemId(), entity.getEncoding(), -1, -1, 0, xml11);
                     }
                 }
             }

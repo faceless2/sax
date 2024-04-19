@@ -120,4 +120,34 @@ class InputSourceURN extends InputSource {
         }
     }
 
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("InputSource@");
+        sb.append(Integer.toHexString(hashCode()));
+        sb.append("{");
+        if (getPublicId() != null) {
+            sb.append("public=\"" + BFOXMLReader.fmt(getPublicId()) + "\" ");
+
+        }
+        if (getSystemId() != null) {
+            sb.append("system=\"" + BFOXMLReader.fmt(getSystemId()) + "\" ");
+        }
+        if (getEncoding() != null) {
+            sb.append("encoding=" + getEncoding() + " ");
+        }
+        if (getCharacterStream() != null) {
+            sb.append("charstream=" + getCharacterStream() + " ");
+        }
+        if (getByteStream() != null) {
+            sb.append("bytestream=" + getByteStream() + " ");
+        }
+        if (sb.charAt(sb.length() - 1) == ' ') {
+            sb.setCharAt(sb.length() - 1, '}');
+        } else {
+            sb.append('}');
+        }
+        return sb.toString();
+    }
+
+
 }

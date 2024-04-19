@@ -14,15 +14,15 @@ class Entity {
     static final Entity APOS = createSimple("apos", "'");
     static final Entity QUOT = createSimple("quot", "\"");
 
-    private final String name, value, systemId, publicId, parentSystemId;
-    private final int line, column;
+    private final String name, value, systemId, publicId, parentSystemId, encoding;
+    private final int line, column, offset;
 
     /**
      * Create a "character" entity, ie &#xa;
      * @param codepoint the codepoint
      */
     static Entity createCharacter(int codepoint) {
-        return new Entity(null, Character.toString(codepoint), null, null, null, TYPE_CHARACTER, TYPE_CHARACTER);
+        return new Entity(null, Character.toString(codepoint), null, null, null, null, TYPE_CHARACTER, TYPE_CHARACTER, 0);
     }
 
     /**
@@ -33,7 +33,7 @@ class Entity {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, null, null, null, null, TYPE_INVALID, TYPE_INVALID);
+        return new Entity(name, null, null, null, null, null, TYPE_INVALID, TYPE_INVALID, 0);
     }
 
     /**
@@ -45,7 +45,7 @@ class Entity {
         if (name == null || name.length() == 0 || value == null) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, value, null, null, null, TYPE_SIMPLE, TYPE_SIMPLE);
+        return new Entity(name, value, null, null, null, null, TYPE_SIMPLE, TYPE_SIMPLE, 0);
     }
 
     /**
@@ -55,7 +55,7 @@ class Entity {
      * @param systemId the systemID of this DTD
      */
     static Entity createDTD(String name, String publicId, String systemId, String parentSystemId) {
-        return new Entity(name, null, publicId, systemId, parentSystemId, TYPE_DTD, TYPE_DTD);
+        return new Entity(name, null, publicId, systemId, parentSystemId, null, TYPE_DTD, TYPE_DTD, 0);
     }
 
     /**
@@ -68,7 +68,7 @@ class Entity {
         if (name == null || name.length() == 0) {
             throw new IllegalArgumentException();
         }
-        return new Entity(name, null, publicId, systemId, parentSystemId, TYPE_EXTERNAL, TYPE_EXTERNAL);
+        return new Entity(name, null, publicId, systemId, parentSystemId, null, TYPE_EXTERNAL, TYPE_EXTERNAL, 0);
     }
 
     /**
@@ -80,7 +80,7 @@ class Entity {
      * @param line the line-number in the document where this Entity was defined
      * @param column the column-number in the document where this Entity was defined
      */
-    static Entity createInternal(String name, String value, String publicId, String systemId, int line, int column) {
+    static Entity createInternal(String name, String value, String publicId, String systemId, String encoding, int line, int column, int offset) {
         if (name == null || name.length() == 0 || value == null) {
             throw new IllegalArgumentException();
         }
@@ -90,17 +90,22 @@ class Entity {
         if (column < 0) {
             column = -1;
         }
-        return new Entity(name, value, publicId, systemId, null, line, column);
+        if (offset < 0) {
+            column = -1;
+        }
+        return new Entity(name, value, publicId, systemId, null, encoding, line, column, offset);
     }
 
-    private Entity(String name, String value, String publicId, String systemId, String parentSystemId, int line, int column) {
+    private Entity(String name, String value, String publicId, String systemId, String parentSystemId, String encoding, int line, int column, int offset) {
         this.name = name;
         this.value = value;
         this.publicId = publicId;
         this.systemId = systemId;
         this.parentSystemId = parentSystemId;
+        this.encoding = encoding;
         this.line = line;
         this.column = column;
+        this.offset = offset;
     }
 
     public String toString() {
@@ -226,6 +231,20 @@ class Entity {
      */
     int getColumnNumber() {
         return column;
+    }
+
+    /**
+     * For internal entities, return the offset number it was created at
+     */
+    int getCharacterOffset() {
+        return offset;
+    }
+
+    /**
+     * For internal entities, return the encoding it was created with
+     */
+    String getEncoding() {
+        return encoding;
     }
 
 }
