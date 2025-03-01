@@ -9,6 +9,7 @@ import java.util.*;
 
 class BFOXMLEventReader implements XMLEventReader {
 
+    private boolean eof;
     private XMLStreamReader reader;
     private XMLEventAllocator allocator;
     private XMLEvent lastEvent, nextEvent;
@@ -19,41 +20,43 @@ class BFOXMLEventReader implements XMLEventReader {
         if (this.allocator == null) {
             this.allocator = new XMLEventAllocatorImpl();
         }
-        nextEvent = allocator.allocate(reader);
     }
 
     public boolean hasNext() {
-        if (nextEvent != null) {
-            return true;
-        }
         try {
-            return reader.hasNext();
+            return nextEvent != null || (!eof && reader.hasNext());
         } catch (XMLStreamException e) {
             return false;
         }
     }
 
-
     public XMLEvent nextEvent() throws XMLStreamException {
         if (nextEvent != null) {
-            lastEvent = nextEvent ;
+            lastEvent = nextEvent;
             nextEvent = null;
-            return lastEvent;
-        } else if (reader.hasNext()) {
+        } else if (reader.hasNext() && !eof) {
             reader.next();
             lastEvent = allocator.allocate(reader);
-            return lastEvent;
+            eof = reader.getEventType() == XMLEvent.END_DOCUMENT;
         } else {
+            eof = true;
             lastEvent = null;
             throw new NoSuchElementException();
         }
+        return lastEvent;
     }
 
     public void remove() {
-        //remove of the event is not supported.
-        throw new java.lang.UnsupportedOperationException();
+        throw new UnsupportedOperationException();
     }
 
+    public Object next() {
+        try {
+            return nextEvent();
+        } catch (XMLStreamException e) {
+            throw (NoSuchElementException)new NoSuchElementException(e.getMessage()).initCause(e);
+        }
+    }
 
     public void close() throws XMLStreamException {
         reader.close();
@@ -63,54 +66,35 @@ class BFOXMLEventReader implements XMLEventReader {
         if (lastEvent.getEventType() != XMLEvent.START_ELEMENT) {
             throw new XMLStreamException("parser must be on START_ELEMENT to read next text", lastEvent.getLocation());
         }
-        String data = null;
-        if (nextEvent != null) {
-            XMLEvent event = nextEvent;
-            nextEvent = null;
+        CharSequence out = null;
+        while (true) {
+            XMLEvent event = nextEvent();
             int type = event.getEventType();
-
+            String data = null;
             if (type == XMLEvent.CHARACTERS || type == XMLEvent.SPACE || type == XMLEvent.CDATA) {
                 data = event.asCharacters().getData();
             } else if (type == XMLEvent.ENTITY_REFERENCE) {
                 data = ((EntityReference)event).getDeclaration().getReplacementText();
             } else if (type == XMLEvent.COMMENT || type == XMLEvent.PROCESSING_INSTRUCTION) {
                 //ignore
-            } else if (type == XMLEvent.START_ELEMENT) {
-                throw new XMLStreamException("elementGetText() function expects text only elment but START_ELEMENT was encountered.", event.getLocation());
             } else if (type == XMLEvent.END_ELEMENT) {
-                return "";
-            }
-
-            StringBuilder buf = new StringBuilder();
-            if (data != null) {
-                buf.append(data);
-            }
-            event = nextEvent();
-            while ((type = event.getEventType()) != XMLEvent.END_ELEMENT) {
-                if (type == XMLEvent.CHARACTERS || type == XMLEvent.SPACE || type == XMLEvent.CDATA) {
-                    data = event.asCharacters().getData();
-                } else if (type == XMLEvent.ENTITY_REFERENCE) {
-                    data = ((EntityReference)event).getDeclaration().getReplacementText();
-                } else if (type == XMLEvent.COMMENT || type == XMLEvent.PROCESSING_INSTRUCTION) {
-                    data = null;
-                } else if (type == XMLEvent.END_DOCUMENT) {
-                    throw new XMLStreamException("unexpected end of document when reading element text content");
-                } else if (type == XMLEvent.START_ELEMENT) {
-                    throw new XMLStreamException("elementGetText() function expects text only elment but START_ELEMENT was encountered.", event.getLocation());
-                } else {
-                    throw new XMLStreamException("Unexpected event type "+ type, event.getLocation());
+                if (out == null) {
+                    out = "";
                 }
-                //add the data to the buf
-                if (data != null) {
-                    buf.append(data);
-                }
-                event = nextEvent();
+                break;
+            } else {
+                throw new XMLStreamException("getElementText() expected text, got " + eventString(type), event.getLocation());
             }
-            return buf.toString();
+            if (out == null) {
+                out = data;
+            } else {
+                if (!(out instanceof StringBuilder)) {
+                    out = new StringBuilder(out);
+                }
+                ((StringBuilder)out).append(data);
+            }
         }
-        data = reader.getElementText();
-        lastEvent = allocator.allocate(reader);
-        return data;
+        return out.toString();
     }
 
     public Object getProperty(String name) {
@@ -118,50 +102,44 @@ class BFOXMLEventReader implements XMLEventReader {
     }
 
     public XMLEvent nextTag() throws XMLStreamException {
-        if (nextEvent != null) {
-            XMLEvent event = nextEvent;
-            nextEvent = null;
-            int eventType = event.getEventType();
-            if ((event.isCharacters() && event.asCharacters().isWhiteSpace()) || eventType == XMLStreamConstants.PROCESSING_INSTRUCTION || eventType == XMLStreamConstants.COMMENT || eventType == XMLStreamConstants.START_DOCUMENT) {
-                event = nextEvent();
-                eventType = event.getEventType();
-            }
-            while ((event.isCharacters() && event.asCharacters().isWhiteSpace()) || eventType == XMLStreamConstants.PROCESSING_INSTRUCTION || eventType == XMLStreamConstants.COMMENT) {
-                event = nextEvent();
-                eventType = event.getEventType();
-            }
-            if (eventType != XMLStreamConstants.START_ELEMENT && eventType != XMLStreamConstants.END_ELEMENT) {
-                throw new XMLStreamException("expected start or end tag", event.getLocation());
-            }
-            return event;
+        XMLEvent event;
+        do {
+            event = nextEvent();
+        } while (((event.getEventType() == XMLEvent.CHARACTERS || event.getEventType() == XMLEvent.CDATA) && event.asCharacters().isWhiteSpace()) || event.getEventType() == XMLEvent.COMMENT);
+        if (!event.isStartElement() && !event.isStartElement()) {
+            throw new XMLStreamException("nextTag() expected START_ELEMENT or END_ELEMENT, got " + eventString(event.getEventType()), event.getLocation());
         }
-        reader.nextTag();
-        lastEvent = allocator.allocate(reader);
-        return lastEvent;
+        return event;
     }
 
-    public Object next() {
-        Object object = null;
-        try{
-            object = nextEvent();
-        } catch (XMLStreamException e) {
-            lastEvent = null;
-            return (NoSuchElementException)new NoSuchElementException(e.getMessage()).initCause(e);
-        }
-        return object;
-    }
-
-    public XMLEvent peek() throws XMLStreamException{
+    public XMLEvent peek() throws XMLStreamException {
         if (nextEvent != null) {
             return nextEvent;
-        }
-
-        if (hasNext()) {
-            reader.next();
-            nextEvent = allocator.allocate(reader);
-            return nextEvent;
+        } else if (hasNext()) {
+            return nextEvent = nextEvent();
         } else {
             return null;
+        }
+    }
+
+    private static String eventString(int type) {
+        switch (type) {
+            case XMLEvent.START_ELEMENT:            return "START_ELEMENT";
+            case XMLEvent.END_ELEMENT:              return "END_ELEMENT";
+            case XMLEvent.PROCESSING_INSTRUCTION:   return "PROCESSING_INSTRUCTION";
+            case XMLEvent.CHARACTERS:               return "CHARACTERS";
+            case XMLEvent.CDATA:                    return "CDATA";
+            case XMLEvent.SPACE:                    return "SPACE";
+            case XMLEvent.COMMENT:                  return "COMMENT";
+            case XMLEvent.START_DOCUMENT:           return "START_DOCUMENT";
+            case XMLEvent.END_DOCUMENT:             return "END_DOCUMENT";
+            case XMLEvent.ENTITY_REFERENCE:         return "ENTITY_REFERENCE";
+            case XMLEvent.ATTRIBUTE:                return "ATTRIBUTE";
+            case XMLEvent.DTD:                      return "DTD";
+            case XMLEvent.NAMESPACE:                return "NAMESPACE";
+            case XMLEvent.ENTITY_DECLARATION:       return "ENTITY_DECLARATION";
+            case XMLEvent.NOTATION_DECLARATION:     return "NOTATION_DECLARATION";
+            default:                                return type < 0 ? "EOF" : "UNKNOWN-"+ type;
         }
     }
 
@@ -193,11 +171,8 @@ class BFOXMLEventReader implements XMLEventReader {
                     return factory.createStartDocument(r.getCharacterEncodingScheme(), r.getVersion(), r.isStandalone());
                 case XMLEvent.END_DOCUMENT:
                     return factory.createEndDocument();
-                case XMLEvent.ENTITY_REFERENCE:
-                case XMLEvent.ATTRIBUTE:
-                case XMLEvent.DTD: 
                 default:
-                    throw new UnsupportedOperationException();
+                    throw new UnsupportedOperationException(eventString(r.getEventType()));
             }
         }
 

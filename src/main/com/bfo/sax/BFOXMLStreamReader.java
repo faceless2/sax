@@ -712,7 +712,7 @@ class BFOXMLStreamReader implements XMLStreamReader {
         if (eventType != START_ELEMENT && eventType != END_ELEMENT) {
             throw new XMLStreamException("expected start or end tag", getLocation());
         }
-        return eventType; 
+        return eventType;
     }
 
 
