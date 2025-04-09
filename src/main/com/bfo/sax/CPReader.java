@@ -293,7 +293,7 @@ abstract class CPReader {
             this.column = 1;
         }
         @Override public int read() throws IOException, SAXException {
-            if (pos == len) {
+            if (pos >= len) {
                 if (pos < 0) {
                     return -1;
                 }
